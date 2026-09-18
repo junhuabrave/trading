@@ -27,22 +27,23 @@ inline constexpr size_t LIST_BYTES = MAX_SYMBOLS / 8;
 
 class Snapshot {
 public:
+    // A constructor that throws does not run the destructor, so the mapping and descriptor are
+    // released explicitly on every rejection path (a rejected snapshot must not leak).
     explicit Snapshot(const std::string& path) {
-        fd_ = ::open(path.c_str(), O_RDONLY);
-        if (fd_ < 0) throw std::runtime_error("snapshot: cannot open " + path);
-        struct stat st{};
-        if (::fstat(fd_, &st) != 0) throw std::runtime_error("snapshot: fstat failed");
-        size_ = size_t(st.st_size);
-        if (size_ < PAGE) throw std::runtime_error("snapshot: file smaller than header");
-        base_ = static_cast<const std::byte*>(::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd_, 0));
-        if (base_ == MAP_FAILED) throw std::runtime_error("snapshot: mmap failed");
-        hdr_ = reinterpret_cast<const SnapshotHeader*>(base_);
-        verify();
+        try {
+            fd_ = ::open(path.c_str(), O_RDONLY);
+            if (fd_ < 0) throw std::runtime_error("snapshot: cannot open " + path);
+            struct stat st{};
+            if (::fstat(fd_, &st) != 0) throw std::runtime_error("snapshot: fstat failed");
+            size_ = size_t(st.st_size);
+            if (size_ < PAGE) throw std::runtime_error("snapshot: file smaller than header");
+            base_ = static_cast<const std::byte*>(::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd_, 0));
+            if (base_ == MAP_FAILED) { base_ = nullptr; throw std::runtime_error("snapshot: mmap failed"); }
+            hdr_ = reinterpret_cast<const SnapshotHeader*>(base_);
+            verify();
+        } catch (...) { release(); throw; }
     }
-    ~Snapshot() {
-        if (base_ && base_ != MAP_FAILED) ::munmap(const_cast<std::byte*>(base_), size_);
-        if (fd_ >= 0) ::close(fd_);
-    }
+    ~Snapshot() { release(); }
     Snapshot(const Snapshot&) = delete;
     Snapshot& operator=(const Snapshot&) = delete;
 
@@ -100,6 +101,11 @@ public:
     }
 
 private:
+    void release() noexcept {
+        if (base_) ::munmap(const_cast<std::byte*>(base_), size_);
+        if (fd_ >= 0) ::close(fd_);
+        base_ = nullptr; fd_ = -1;
+    }
     void verify() const {
         if (std::memcmp(hdr_->magic, "RFDS", 4) != 0) throw std::runtime_error("snapshot: bad magic");
         if (hdr_->formatVersion != 1) throw std::runtime_error("snapshot: unsupported format version");

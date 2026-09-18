@@ -54,7 +54,7 @@ public:
             if (e.is_regular_file() && e.path().extension() == ".jnl") files.push_back(e.path());
         std::sort(files.begin(), files.end());
         if (files.empty()) { lastSeq_ = firstSeqIfNew - 1; openSegment(0, firstSeqIfNew); return; }
-        recover(files);
+        try { recover(files); } catch (...) { if (fp_) { std::fclose(fp_); fp_ = nullptr; } throw; }
     }
     ~Journal() { if (fp_) std::fclose(fp_); }
     Journal(const Journal&) = delete; Journal& operator=(const Journal&) = delete;
@@ -153,16 +153,17 @@ private:
             std::string path = files[fi].string();
             std::FILE* fp = std::fopen(path.c_str(), last ? "r+b" : "rb");
             if (!fp) throw std::runtime_error("journal: cannot open " + path);
+            auto fail = [&](const std::string& why) { std::fclose(fp); throw std::runtime_error(why); };
             std::fseek(fp, 0, SEEK_END); long fileLen = std::ftell(fp); std::fseek(fp, 0, SEEK_SET);
             JournalHeader hdr{};
             if (fileLen < long(sizeof(JournalHeader)) || std::fread(&hdr, sizeof hdr, 1, fp) != 1
                 || std::memcmp(hdr.magic, "SEQJ", 4) != 0 || hdr.formatVersion != 2)
-                throw std::runtime_error("journal: bad header in " + path);
-            if (hdr.streamId != streamId_) throw std::runtime_error("journal: stream id mismatch in " + path);
-            if (hdr.schemaVersion > SCHEMA_VERSION) throw std::runtime_error("journal: schema newer than codec");
-            if (hdr.segmentIndex != fi) throw std::runtime_error("journal: missing segment before " + path);
+                fail("journal: bad header in " + path);
+            if (hdr.streamId != streamId_) fail("journal: stream id mismatch in " + path);
+            if (hdr.schemaVersion > SCHEMA_VERSION) fail("journal: schema newer than codec");
+            if (hdr.segmentIndex != fi) fail("journal: missing segment before " + path);
             if (first) { expect = hdr.firstSeq; first = false; }
-            else if (hdr.firstSeq != expect) throw std::runtime_error("journal: sequence gap at " + path);
+            else if (hdr.firstSeq != expect) fail("journal: sequence gap at " + path);
             Segment seg{path, hdr.firstSeq, hdr.firstSeq - 1, sizeof(JournalHeader), 0};
             uint64_t off = sizeof(JournalHeader);
             while (off + sizeof(FrameHeader) <= uint64_t(fileLen)) {
@@ -179,8 +180,8 @@ private:
             }
             seg.bytes = off;
             if (off < uint64_t(fileLen)) {
-                if (!last) throw std::runtime_error("journal: damaged frame inside " + path);
-                if (::ftruncate(::fileno(fp), off_t(off)) != 0) throw std::runtime_error("journal: truncate failed");
+                if (!last) fail("journal: damaged frame inside " + path);
+                if (::ftruncate(::fileno(fp), off_t(off)) != 0) fail("journal: truncate failed");
                 truncatedBytes_ = uint64_t(fileLen) - off;
             }
             segs_.push_back(seg);
