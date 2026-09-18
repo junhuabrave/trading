@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broker-dealer trading stack: system design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF1F4; --panel:#FFFFFF; --ink:#1B2430; --muted:#5C6773; --rule:#C9D0D8;
+  --hot:#C8781C; --hot-soft:#F6E4CC; --cold:#2E7D7A; --cold-soft:#D4E9E7;
+  --warn:#9A3B2B; --warn-soft:#F3DDD8;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+    --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+    --warn:#E07A66; --warn-soft:#3B1F1A;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+  --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+  --warn:#E07A66; --warn-soft:#3B1F1A;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:17px;line-height:1.6}
+h1,h2,h3,h4{font-family:"Bitter","Georgia",serif;line-height:1.2;margin:0}
+h1{font-size:2.4rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.65rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:2px solid var(--ink)}
+h3{font-size:1.2rem;font-weight:600;margin-top:2rem}
+h4{font-size:1rem;font-weight:600;margin-top:1.2rem}
+p{margin:.8rem 0;max-width:70ch}
+ul,ol{max-width:70ch;padding-left:1.3rem}
+li{margin:.3rem 0}
+a{color:var(--cold)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--hot);outline-offset:2px}
+code{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.92em;background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:0 .3em}
+pre{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.5;max-width:100%}
+pre code{border:0;padding:0;background:none}
+.wrap{display:grid;grid-template-columns:230px minmax(0,1fr);gap:3rem;max-width:1180px;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+nav.toc{position:sticky;top:1.5rem;align-self:start;font-size:.88rem;line-height:1.45}
+nav.toc ol{list-style:none;padding:0;margin:0}
+nav.toc li{margin:.25rem 0}
+nav.toc a{color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+nav.toc .grp{margin-top:1rem;color:var(--ink);font-weight:600}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:1.5rem}nav.toc{position:static;border-bottom:1px solid var(--rule);padding-bottom:1rem}nav.toc ol{columns:2}}
+header.hero{margin-bottom:2rem}
+header.hero .sub{font-size:1.15rem;color:var(--muted);max-width:62ch;margin-top:.8rem}
+.legend{display:flex;gap:1.6rem;flex-wrap:wrap;margin:1.2rem 0 .4rem;font-size:.9rem;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:.85em;height:.85em;border-radius:2px;margin-right:.45em;vertical-align:-.08em}
+.legend .h::before{background:var(--hot)} .legend .c::before{background:var(--cold)}
+.path{display:inline-block;font-size:.72rem;font-weight:600;padding:.12rem .5rem;border-radius:3px;vertical-align:.25em;margin-left:.5rem;letter-spacing:.01em}
+.path.hot{background:var(--hot-soft);color:var(--hot)} .path.cold{background:var(--cold-soft);color:var(--cold)}
+.note{border-left:4px solid var(--hot);background:var(--panel);padding:.9rem 1.1rem;margin:1.4rem 0;max-width:72ch;border-radius:0 4px 4px 0}
+.note.risk{border-left-color:var(--warn)}
+.note p{margin:.4rem 0}
+.diagram{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.6rem;margin:1.2rem 0;overflow-x:auto}
+.diagram svg{width:100%;min-width:760px;height:auto;display:block;font-family:"IBM Plex Sans",sans-serif}
+.spec{display:grid;grid-template-columns:150px minmax(0,1fr);gap:.5rem 1.2rem;margin:1rem 0;max-width:78ch}
+.spec dt{color:var(--muted);font-size:.9rem;font-weight:500;padding-top:.15rem}
+.spec dd{margin:0}
+.spec dd ul{margin:0;padding-left:1.1rem}
+@media (max-width:600px){.spec{grid-template-columns:1fr}.spec dt{margin-top:.6rem}}
+.tablewrap{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;font-size:.92rem;min-width:560px}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:600;border-bottom:2px solid var(--ink)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.total td{font-weight:600;border-top:2px solid var(--ink)}
+.phases{counter-reset:ph;list-style:none;padding:0;max-width:78ch}
+.phases>li{counter-increment:ph;display:grid;grid-template-columns:3rem minmax(0,1fr);gap:.8rem;padding:1rem 0;border-bottom:1px solid var(--rule)}
+.phases>li::before{content:counter(ph);font-family:"Bitter",serif;font-size:1.8rem;font-weight:700;color:var(--hot);line-height:1}
+.phases h4{margin-top:.15rem}
+.phases p{margin:.35rem 0}
+.tag{font-size:.8rem;color:var(--muted)}
+footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:var(--muted);font-size:.88rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+<ol>
+<li><a href="#scope">Scope and honest framing</a></li>
+<li><a href="#target">Target profile</a></li>
+<li><a href="#arch">Overall architecture</a></li>
+<li><a href="#principles">Design principles</a></li>
+<li><a href="#latency">Latency budget</a></li>
+<li class="grp">Components</li>
+<li><a href="#c-md">Market data platform</a></li>
+<li><a href="#c-gw">Client gateways</a></li>
+<li><a href="#c-risk">Pre-trade risk</a></li>
+<li><a href="#c-oms">Order management</a></li>
+<li><a href="#c-sor">Smart order router</a></li>
+<li><a href="#c-mm">Market making</a></li>
+<li><a href="#c-vgw">Venue gateways</a></li>
+<li><a href="#c-pos">Position keeper</a></li>
+<li><a href="#c-loan">Stock loan</a></li>
+<li><a href="#c-margin">Margin engine</a></li>
+<li><a href="#c-post">Post-trade and clearing</a></li>
+<li><a href="#c-comp">Compliance and surveillance</a></li>
+<li><a href="#c-ref">Reference data</a></li>
+<li><a href="#c-acct">Accounts, KYC, client apps</a></li>
+<li><a href="#c-infra">Platform infrastructure</a></li>
+<li class="grp">Delivery</li>
+<li><a href="#bvb">Build vs buy</a></li>
+<li><a href="#roadmap">Roadmap</a></li>
+<li><a href="#team">Team and cost reality</a></li>
+<li><a href="#edge">Where the edge comes from</a></li>
+<li><a href="#next">What we build first</a></li>
+</ol>
+</nav>
+
+<main>
+<header class="hero">
+<h1>Broker-dealer trading stack</h1>
+<p class="sub">A complete system design for an electronic broker with agency execution, an internal market maker, a securities lending desk, and the risk, position, clearing and compliance plumbing that holds it together. Written for a C++-first build.</p>
+<div class="legend"><span class="h">Hot path: latency-critical, deterministic, C++</span><span class="c">Cold path: correctness-critical, services, any language</span></div>
+</header>
+
+<h2 id="scope">Scope and honest framing</h2>
+<p>Yes, I can design this and build it with you, component by component. What I cannot do is hand you a finished broker in one conversation. A production broker-dealer stack is a two-to-three-year programme for a serious team, and about a third of the work is regulatory, operational and commercial rather than software. This document is the first deliverable: the overall design, every component specified to the level where we can start coding it, and the sequence in which to build so that each phase produces something usable and each later phase reuses rather than rewrites.</p>
+<p>"Competitive" needs a definition. You will not beat Citadel Securities or Jane Street on raw tick-to-trade in a software stack; they run FPGA quoting with sub-microsecond wire-to-wire numbers. A competitive position for a new broker is different: internal latency in the low tens of microseconds for agency flow, single-digit microseconds tick-to-quote for the market maker, best-execution quality that is measurably better than payment-for-order-flow retail brokers, a stock-loan desk that is a profit centre with genuinely verified locates, and a deterministic architecture that gives you replay-based testing, hot failover and a perfect audit trail. That combination is rarer than it sounds, and it is achievable.</p>
+
+<h2 id="target">Target profile</h2>
+<p>Every decision below assumes this profile. Change the profile and some decisions change.</p>
+<dl class="spec">
+<dt>Business lines</dt><dd>Agency execution for API-first professional and institutional clients; internalising market maker for that flow and for selected liquid names; securities lending (borrow and lend); margin lending.</dd>
+<dt>Markets</dt><dd>US cash equities first (deepest, most fragmented, best venue data). UK and EU equities second. US listed options third. Crypto deliberately excluded from the core: different settlement, custody and regulatory model, and it would compromise the hot path.</dd>
+<dt>Clearing</dt><dd>Introducing broker on a clearing firm for the first eighteen months. Self-clearing is a later phase, once volume justifies the capital and the operations team.</dd>
+<dt>Clients</dt><dd>FIX and binary API clients as the primary channel; a web and mobile front end as the secondary channel. This ordering matters: an API-first broker can defer a lot of UI work and the fraud surface that comes with it.</dd>
+<dt>Languages</dt><dd>C++23 on Linux for the hot path. Go for control-plane services. Python for research, analytics and compliance models. TypeScript for the client front end. One hot-path language, no exceptions, so the sequencer log is replayable by every component.</dd>
+</dl>
+
+<h2 id="arch">Overall architecture</h2>
+<p>The spine of the system is a single sequenced event log. Every state change on the hot path (an order arriving, a fill, a quote update, a risk decision, a position change) is a message that passes through a sequencer, receives a monotonic sequence number, and is broadcast to every component. Components are deterministic state machines: given the same log, they arrive at the same state. That one decision buys you replay testing, hot standby, audit and reconciliation almost for free.</p>
+<div class="diagram" role="img" aria-label="Architecture diagram: clients connect through gateways to a sequenced hot path of risk, OMS, SOR, market maker and position keeper, which connects to venues; cold-path services subscribe to the same log.">
+<svg viewBox="0 0 1100 640" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+<style>
+.bx{fill:var(--panel);stroke:var(--rule);stroke-width:1.2}
+.hb{fill:var(--hot-soft);stroke:var(--hot);stroke-width:1.4}
+.cb{fill:var(--cold-soft);stroke:var(--cold);stroke-width:1.4}
+.t{fill:var(--ink);font-size:13px;font-weight:600}
+.s{fill:var(--muted);font-size:11px}
+.ln{stroke:var(--muted);stroke-width:1.3;fill:none;marker-end:url(#ah)}
+.spine{stroke:var(--hot);stroke-width:5;fill:none}
+.lbl{fill:var(--hot);font-size:12px;font-weight:600}
+.clbl{fill:var(--cold);font-size:12px;font-weight:600}
+</style>
+</defs>
+
+<!-- Clients column -->
+<text x="20" y="40" class="t">Clients</text>
+<rect x="20" y="55" width="130" height="46" rx="3" class="bx"/><text x="30" y="75" class="t">FIX / binary API</text><text x="30" y="91" class="s">institutional, algo</text>
+<rect x="20" y="115" width="130" height="46" rx="3" class="bx"/><text x="30" y="135" class="t">Web and mobile</text><text x="30" y="151" class="s">via REST/WebSocket</text>
+<rect x="20" y="175" width="130" height="46" rx="3" class="bx"/><text x="30" y="195" class="t">Internal desks</text><text x="30" y="211" class="s">MM, stock loan, ops</text>
+
+<!-- Gateways -->
+<text x="200" y="40" class="t">Edge</text>
+<rect x="200" y="55" width="140" height="70" rx="3" class="hb"/><text x="210" y="77" class="t">Client gateways</text><text x="210" y="93" class="s">session, auth, normalise</text><text x="210" y="109" class="s">to internal binary msg</text>
+<rect x="200" y="175" width="140" height="46" rx="3" class="cb"/><text x="210" y="195" class="t">API / web edge</text><text x="210" y="211" class="s">REST, WS, rate limits</text>
+<path d="M150 78H198" class="ln"/><path d="M150 138 L198 100" class="ln"/><path d="M150 198H198" class="ln"/>
+<path d="M270 175V127" class="ln"/>
+
+<!-- Spine -->
+<path d="M390 40V400" class="spine"/>
+<text x="360" y="28" class="lbl">Sequencer: total-order event log</text>
+<path d="M340 90H388" class="ln"/>
+
+<!-- Hot path components -->
+<text x="430" y="40" class="t">Hot path (deterministic C++ state machines, all replay the log)</text>
+<rect x="430" y="55" width="150" height="46" rx="3" class="hb"/><text x="440" y="75" class="t">Pre-trade risk</text><text x="440" y="91" class="s">limits, buying power</text>
+<rect x="600" y="55" width="150" height="46" rx="3" class="hb"/><text x="610" y="75" class="t">Order manager</text><text x="610" y="91" class="s">parent/child lifecycle</text>
+<rect x="770" y="55" width="150" height="46" rx="3" class="hb"/><text x="780" y="75" class="t">Smart order router</text><text x="780" y="91" class="s">venue choice, slicing</text>
+<rect x="430" y="125" width="150" height="46" rx="3" class="hb"/><text x="440" y="145" class="t">Market maker</text><text x="440" y="161" class="s">fair value, quotes, skew</text>
+<rect x="600" y="125" width="150" height="46" rx="3" class="hb"/><text x="610" y="145" class="t">Position keeper</text><text x="610" y="161" class="s">hot view: qty, exposure</text>
+<rect x="770" y="125" width="150" height="46" rx="3" class="hb"/><text x="780" y="145" class="t">Internaliser</text><text x="780" y="161" class="s">client vs MM crossing</text>
+<rect x="430" y="195" width="320" height="46" rx="3" class="hb"/><text x="440" y="215" class="t">Market data: feed handlers, book builder, NBBO</text><text x="440" y="231" class="s">direct feeds + SIP, normalised books published to all hot components</text>
+<rect x="770" y="195" width="150" height="46" rx="3" class="hb"/><text x="780" y="215" class="t">Venue gateways</text><text x="780" y="231" class="s">FIX / OUCH / native</text>
+
+<path d="M392 78H428" class="ln"/><path d="M580 78H598" class="ln"/><path d="M750 78H768" class="ln"/>
+<path d="M392 148H428" class="ln"/><path d="M392 218H428" class="ln"/>
+<path d="M845 101V123" class="ln"/><path d="M845 171V193" class="ln"/>
+
+<!-- Venues -->
+<text x="960" y="40" class="t">Venues</text>
+<rect x="960" y="55" width="120" height="36" rx="3" class="bx"/><text x="970" y="78" class="t">Exchanges</text>
+<rect x="960" y="103" width="120" height="36" rx="3" class="bx"/><text x="970" y="126" class="t">ATS / dark pools</text>
+<rect x="960" y="151" width="120" height="36" rx="3" class="bx"/><text x="970" y="174" class="t">Wholesalers</text>
+<rect x="960" y="199" width="120" height="36" rx="3" class="bx"/><text x="970" y="222" class="t">Feed sources</text>
+<path d="M920 218H958" class="ln"/><path d="M920 218 L958 122" class="ln"/><path d="M920 218 L958 73" class="ln"/><path d="M958 218 L920 224" class="ln" style="marker-end:none"/>
+
+<!-- Cold path band -->
+<path d="M20 290H1080" stroke="var(--rule)" stroke-dasharray="4 4"/>
+<text x="20" y="320" class="clbl">Cold path (subscribes to the same log; correctness over latency)</text>
+<path d="M390 400 L390 400" />
+<path d="M390 400 Q390 430 420 430 H1000" class="ln" style="stroke:var(--cold)"/>
+<text x="400" y="452" class="s">every service consumes the sequenced log, never a private copy of state</text>
+
+<rect x="20" y="340" width="150" height="46" rx="3" class="cb"/><text x="30" y="360" class="t">Stock loan</text><text x="30" y="376" class="s">locate, borrow, recall</text>
+<rect x="190" y="340" width="150" height="46" rx="3" class="cb"/><text x="200" y="360" class="t">Margin engine</text><text x="200" y="376" class="s">requirements, calls</text>
+<rect x="430" y="340" width="150" height="46" rx="3" class="cb"/><text x="440" y="360" class="t">Post-trade</text><text x="440" y="376" class="s">allocation, clearing</text>
+<rect x="600" y="340" width="150" height="46" rx="3" class="cb"/><text x="610" y="360" class="t">Compliance</text><text x="610" y="376" class="s">surveillance, Reg SHO</text>
+<rect x="770" y="340" width="150" height="46" rx="3" class="cb"/><text x="780" y="360" class="t">Reporting</text><text x="780" y="376" class="s">CAT, 605/606, MiFIR</text>
+<rect x="960" y="340" width="120" height="46" rx="3" class="cb"/><text x="970" y="360" class="t">Ledger</text><text x="970" y="376" class="s">books and records</text>
+
+<rect x="20" y="480" width="150" height="46" rx="3" class="cb"/><text x="30" y="500" class="t">Reference data</text><text x="30" y="516" class="s">security master, cal</text>
+<rect x="190" y="480" width="150" height="46" rx="3" class="cb"/><text x="200" y="500" class="t">Accounts / KYC</text><text x="200" y="516" class="s">onboarding, AML</text>
+<rect x="430" y="480" width="150" height="46" rx="3" class="cb"/><text x="440" y="500" class="t">Reconciliation</text><text x="440" y="516" class="s">street vs book, daily</text>
+<rect x="600" y="480" width="150" height="46" rx="3" class="cb"/><text x="610" y="500" class="t">Tick store / replay</text><text x="610" y="516" class="s">history, simulation</text>
+<rect x="770" y="480" width="150" height="46" rx="3" class="cb"/><text x="780" y="500" class="t">Observability</text><text x="780" y="516" class="s">latency, alerts</text>
+<rect x="960" y="480" width="120" height="46" rx="3" class="cb"/><text x="970" y="500" class="t">Control plane</text><text x="970" y="516" class="s">config, kill switch</text>
+
+<!-- Clearing firm -->
+<rect x="430" y="570" width="320" height="40" rx="3" class="bx"/><text x="440" y="594" class="t">Clearing firm / custodian / DTCC (external, then self-clearing later)</text>
+<path d="M505 386V568" class="ln"/><path d="M1020 386 L760 590" class="ln"/>
+</svg>
+</div>
+
+<h2 id="principles">Design principles</h2>
+<p>These are the rules every component follows. They are what make the whole coherent rather than a pile of services.</p>
+<ol>
+<li><strong>One sequenced log, deterministic consumers.</strong> The sequencer assigns a total order. Hot-path components never share memory or call each other; they read the log and publish to it. Replay the log from the start of day and every component reaches the same state. Standby instances run the same code on the same log, so failover is "promote the standby", not "restore from backup".</li>
+<li><strong>Risk before the market, always.</strong> No order reaches a venue gateway without a sequenced risk-accept message. The gateway rejects any order whose risk decision it has not seen. This is enforced by structure, not by convention.</li>
+<li><strong>Positions are derived, never stored as primary state.</strong> The position keeper folds fills from the log. The ledger, margin engine and reconciliation derive their views the same way. When two views disagree, the log is the arbiter.</li>
+<li><strong>Everything is replayable in simulation.</strong> Venue gateways and feed handlers have simulator twins that speak the same binary messages. A strategy, a router change or a risk rule is tested against recorded days before it is deployed, and the test result is bit-for-bit deterministic.</li>
+<li><strong>Cold path is allowed to be slow but never allowed to be wrong.</strong> Stock loan, margin, clearing and compliance run as services with databases, idempotent handlers and explicit state machines. They consume the log at their own pace.</li>
+<li><strong>Auditability is a feature, not a cost.</strong> Every decision (why this venue, why this quote, why this locate) is a message with a reason code. Best-execution reports and regulator enquiries are queries over the log, not forensic reconstructions.</li>
+</ol>
+
+<h2 id="latency">Latency budget</h2>
+<p>Wire-to-wire budget for an agency order arriving at the co-located gateway and leaving for a venue, and tick-to-quote for the market maker. These are software targets on modern x86 with kernel-bypass NICs, pinned cores and no allocation on the hot path. They are competitive for a new broker; they are not HFT-champion numbers, and the design does not pretend otherwise.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Stage</th><th>Agency order, target</th><th>Market maker tick-to-quote, target</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>NIC to userspace</td><td class="num">1.5 µs</td><td class="num">1.5 µs</td><td>Kernel bypass (Onload, ef_vi or DPDK). Interrupts off the trading cores.</td></tr>
+<tr><td>Decode and normalise</td><td class="num">1.0 µs</td><td class="num">0.8 µs</td><td>FIX parsing is the slow case; binary client protocol cuts this in half.</td></tr>
+<tr><td>Sequencer</td><td class="num">2.0 µs</td><td class="num">2.0 µs</td><td>Single-writer, shared-memory ring, sequence assignment and fan-out.</td></tr>
+<tr><td>Pre-trade risk</td><td class="num">1.0 µs</td><td class="num">n/a</td><td>All limits in cache-resident arrays; no locks, no maps on this path.</td></tr>
+<tr><td>Book update</td><td class="num">n/a</td><td class="num">0.7 µs</td><td>Flat array books, price-level deltas only.</td></tr>
+<tr><td>OMS state transition</td><td class="num">1.0 µs</td><td class="num">n/a</td><td>Preallocated order slots, intrusive lists.</td></tr>
+<tr><td>Router or quoting decision</td><td class="num">3.0 µs</td><td class="num">2.0 µs</td><td>Router evaluates venue scorecards; MM recomputes fair value and skew.</td></tr>
+<tr><td>Venue encode and send</td><td class="num">1.5 µs</td><td class="num">1.5 µs</td><td>Native binary protocols (OUCH, Pillar, BOE) not FIX where the venue offers them.</td></tr>
+<tr class="total"><td>Internal total</td><td class="num">≈ 11 µs</td><td class="num">≈ 8.5 µs</td><td>Median. Design for the 99.9th percentile under 40 µs; that is what clients measure.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The jitter budget matters more than the median. Tail latency is where software stacks lose: garbage collection, page faults, NUMA crossings, logging on the hot thread. The platform section below lists the specific defences.</p>
+
+<h2 id="c-md">Market data platform <span class="path hot">hot path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Turn raw venue feeds into a normalised, timestamped view of every book that every hot-path component can read with no further parsing, and preserve every packet for replay.</dd>
+<dt>Design</dt><dd><ul>
+<li>One feed handler process per venue feed, pinned to its own core, consuming multicast directly (A/B line arbitration, gap detection and recovery from the venue's retransmit or snapshot service).</li>
+<li>Feed handlers publish normalised book deltas into the sequencer log with two timestamps: hardware NIC receive time and venue-assigned time. The difference is your first feed-quality metric.</li>
+<li>A book builder maintains per-symbol L2 books as flat arrays indexed by price tick, and a synthetic NBBO computed from direct feeds. The SIP feed is consumed too, and the direct-versus-SIP divergence is logged, because best-execution obligations are measured against the official NBBO while routing decisions want the faster picture.</li>
+<li>Book state is exposed to consumers in shared memory with a seqlock per symbol; readers never block writers.</li>
+<li>Every raw packet is written to a per-day pcap-style capture with hardware timestamps. This is the input to the simulator and the evidence for any dispute.</li>
+</ul></dd>
+<dt>Interfaces</dt><dd>Publishes <code>BookDelta</code>, <code>Trade</code>, <code>Nbbo</code>, <code>Status</code> (halts, auctions) messages. Consumed by risk (reference prices), router, market maker, internaliser, and the cold-path tick store.</dd>
+<dt>Competitive edge</dt><dd>Direct feeds plus hardware timestamps plus full capture. Most mid-tier brokers buy a consolidated feed from a vendor and lose both the latency and the evidence.</dd>
+<dt>Build vs buy</dt><dd>Build the handlers for the two or three venues that matter most (Nasdaq TotalView-ITCH, NYSE Pillar, Cboe PITCH). Consider a vendor SDK for the long tail of venues in the first year; replace later. Never buy the book builder.</dd>
+</dl>
+
+<h2 id="c-gw">Client gateways <span class="path hot">hot path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Accept orders from clients over FIX 4.4/5.0 and a proprietary binary protocol, authenticate, normalise into the internal message format, and deliver execution reports back with the client's own identifiers intact.</dd>
+<dt>Design</dt><dd><ul>
+<li>A FIX engine written in-house or a licensed low-latency engine (see build vs buy). Either way, session state (sequence numbers, resend handling) lives on a per-session thread with a persisted journal so a gateway restart does not lose a session.</li>
+<li>A binary protocol (fixed-layout structs, little-endian, versioned header) for latency-sensitive clients. It is the same struct layout used internally, so the gateway's job for these clients is authentication and a memcpy.</li>
+<li>Client-facing throttles: message rate per session, open-order count, cancel-to-fill ratio warnings. These are protective, not risk controls; risk controls live in the risk engine.</li>
+<li>Drop-copy sessions for clients and for the compliance service, generated from the log rather than from the gateway's memory, so drop copy can never disagree with the book.</li>
+</ul></dd>
+<dt>Interfaces</dt><dd>Inbound: <code>NewOrder</code>, <code>Cancel</code>, <code>Replace</code>, <code>LocateRequest</code>. Outbound: <code>ExecReport</code>, <code>Reject</code> (with reason code), <code>LocateResponse</code>.</dd>
+<dt>Competitive edge</dt><dd>Sub-two-microsecond binary gateway and a FIX gateway that stays under ten. Most brokers' FIX gateways are the single largest source of client-visible latency.</dd>
+</dl>
+
+<h2 id="c-risk">Pre-trade risk engine <span class="path hot">hot path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Decide, in about a microsecond and before any venue sees the order, whether this order is allowed. This is the component regulators care about most (SEC 15c3-5, the market access rule, and its UK/EU equivalents).</dd>
+<dt>Design</dt><dd><ul>
+<li>Limits are loaded at start of day into flat, cache-aligned arrays keyed by account and symbol index. Intraday updates arrive through the log as sequenced <code>LimitUpdate</code> messages, so the risk engine and its standby agree on exactly when a limit changed.</li>
+<li>Checks, in order of cheapness: symbol tradable and not halted; order size and notional caps; price collar against last trade or NBBO (fat-finger); account buying power and short-sale eligibility (has a locate, or symbol is on the easy-to-borrow list); per-account and firm-wide gross and net exposure; duplicate-order detection (same account, symbol, side, size, price within a window); restricted list and short-sale circuit breaker (Rule 201) state.</li>
+<li>Buying power is maintained incrementally: reserved on order accept, adjusted on fill, released on cancel. Never recomputed from scratch on the hot path.</li>
+<li>Every decision is published as <code>RiskAccept</code> or <code>RiskReject</code> with a reason code. The venue gateway will not send an order it has not seen accepted.</li>
+<li>A firm-wide kill switch and per-account kill switch are sequenced messages too, so their effect is instantaneous and reproducible.</li>
+</ul></dd>
+<dt>Competitive edge</dt><dd>Complete market-access compliance at one microsecond, with a deterministic audit trail. Many firms bolt risk onto the OMS and cannot prove the ordering.</dd>
+</dl>
+
+<h2 id="c-oms">Order management system <span class="path hot">hot path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Own the lifecycle of every parent order and every child order it spawns: state, remaining quantity, cumulative fills, average price, and the mapping between client identifiers, internal identifiers and venue identifiers.</dd>
+<dt>Design</dt><dd><ul>
+<li>Explicit state machine per order: <code>PendingNew → Live → PartiallyFilled → Filled | Cancelled | Rejected | Expired</code>, with <code>PendingCancel</code> and <code>PendingReplace</code> as transient states. Every transition is a log message; illegal transitions are impossible by construction.</li>
+<li>Parent/child tree. The router and the algo engine create children; the OMS aggregates child fills up to the parent and emits a single client-facing execution report per fill.</li>
+<li>Memory: a preallocated arena of order slots sized for the day's peak plus margin; free-list reuse; no heap allocation after start-up. Lookups by internal id are array index; by client id and venue id through open-addressing hash tables sized at start-up.</li>
+<li>End-of-day: open orders expire or carry according to time-in-force; the day's log is sealed and archived.</li>
+</ul></dd>
+<dt>Interfaces</dt><dd>Consumes gateway orders, risk decisions, router child orders, venue execution reports. Publishes <code>OrderState</code> transitions and client <code>ExecReport</code>s.</dd>
+<dt>Competitive edge</dt><dd>Not the OMS itself; every broker has one. The edge is that it is deterministic and replayable, so a client dispute is settled by replaying the day, and a new order type is tested against real recorded flow before release.</dd>
+</dl>
+
+<h2 id="c-sor">Smart order router <span class="path hot">hot path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>For each agency parent order, decide the sequence of child orders across venues that gives the best expected execution net of fees, while being provably consistent with the best-execution policy.</dd>
+<dt>Design</dt><dd><ul>
+<li>Inputs: the normalised books for every venue, the NBBO, the venue scorecard (rolling fill rate, effective spread, post-trade reversion, latency, fee or rebate per share by tier), the client's routing instructions and the firm's best-ex policy.</li>
+<li>Strategy library, each a deterministic function from (order, market state, scorecard) to a list of child orders: aggressive sweep across all venues at the NBBO; dark-first with lit spill-over; passive post with rebate preference and a time limit before crossing; pegged to midpoint; and an internaliser check first when the market maker is quoting the symbol.</li>
+<li>Latency-aware release: child orders to different venues are released with per-venue offsets derived from measured one-way latency, so they arrive within a few microseconds of each other and the slower venue does not see the faster venue's print first.</li>
+<li>Fee model is explicit and updated from venue fee schedules; the router optimises net price, and the optimisation is logged so a 606 report and a best-ex committee can see whether rebate capture ever cost a client price improvement.</li>
+<li>Venue scorecards are recomputed in the cold path from the log (TCA: transaction cost analysis) and pushed to the router as sequenced updates.</li>
+</ul></dd>
+<dt>Competitive edge</dt><dd>Provable best execution. The router logs the alternative it rejected and why. Retail brokers who sell order flow cannot make that claim; institutional brokers often can only make it in aggregate.</dd>
+</dl>
+
+<h2 id="c-mm">Market making engine <span class="path hot">hot path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Quote continuous two-sided markets in a chosen universe, internalise client flow where it benefits both sides, and earn spread and rebate while keeping inventory near flat.</dd>
+<dt>Design</dt><dd><ul>
+<li>Fair value model per symbol: microprice from the top-of-book imbalance, adjusted by short-horizon signals (trade-flow imbalance, correlated ETF or sector move, recent volatility). Model parameters are fitted offline in Python and shipped as sequenced <code>ModelParams</code> messages, so the live engine has no learning code, only arithmetic.</li>
+<li>Quote placement follows an inventory-aware model of the Avellaneda–Stoikov family: reservation price shifts against inventory, spread widens with volatility and with the cost of hedging, and both are bounded by hard configuration.</li>
+<li>Adverse-selection defence: quotes pulled or widened on venue-status changes, on scheduled news windows, on detected toxic flow (a counterparty whose fills against you reliably precede price moves, tracked in the cold path and pushed as a scorecard).</li>
+<li>Inventory limits are hard: per symbol, per sector, firm-wide. Breach flattens through the router, not by widening quotes and hoping.</li>
+<li>Internalisation: when a client order arrives in a symbol the MM is quoting, the internaliser matches it against the MM at a price at or better than the NBBO, with price improvement rules encoded and logged. This is where a broker with its own MM makes money that a pure agency broker cannot; it is also the conflict of interest regulators examine most closely, so the improvement rules are conservative and the log shows every decision.</li>
+<li>Bona fide market-making exemption from locate requirements is used only when the engine is quoting continuously in the symbol; the compliance service verifies this from the log daily.</li>
+</ul></dd>
+<dt>Competitive edge</dt><dd>Not raw speed. Discipline: hard inventory limits, offline-fitted models, deterministic replay of every quoting decision, and an internaliser that can show price improvement per fill.</dd>
+</dl>
+
+<h2 id="c-vgw">Venue gateways <span class="path hot">hot path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Speak each venue's order-entry protocol, maintain the session, and translate between venue execution reports and internal messages.</dd>
+<dt>Design</dt><dd>One process per venue session, pinned core, native binary protocol where offered (OUCH for Nasdaq, Pillar binary for NYSE, BOE for Cboe), FIX for the rest. Gateways verify that every outbound order carries a sequenced risk accept. Session recovery (sequence resync, cancel-on-disconnect) is scripted and tested against the venue's certification environment. Simulator twin for every gateway.</dd>
+<dt>Competitive edge</dt><dd>Native protocols and cancel-on-disconnect handled correctly under every failure the venue documents.</dd>
+</dl>
+
+<h2 id="c-pos">Position keeper <span class="path hot">hot path</span> <span class="path cold">cold view</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>The single source of truth for what the firm and each account holds, is owed, and has at risk, at every sequence number.</dd>
+<dt>Design</dt><dd><ul>
+<li>Two views of one fold. The hot view is an in-memory array of (account, symbol) positions updated on every fill from the log, exposed to the market maker, the risk engine and the margin engine through shared memory. The cold view is an event-sourced ledger in a database, rebuilt from the same log, that carries cost basis, lots, realised and unrealised P&amp;L, FX, fees, and the full history.</li>
+<li>Lot accounting: FIFO and specific-identification lot tracking for tax; average cost for the trading desk view. Both derived from the same fills.</li>
+<li>Corporate actions are applied as sequenced <code>CorporateAction</code> messages at a defined effective time, so every consumer adjusts atomically and identically.</li>
+<li>Snapshots every N seconds and at end of day; a restart replays from the last snapshot. Position at any historical sequence number is a query.</li>
+<li>Reconciliation is a first-class consumer: the street-side position file from the clearing firm is loaded daily and diffed against the cold view; every break is a ticket with the owning desk and a deadline.</li>
+</ul></dd>
+<dt>Competitive edge</dt><dd>Zero position drift by construction. The unglamorous truth of broker operations is that most losses and most regulatory findings trace back to positions someone thought were different from what they were.</dd>
+</dl>
+
+<h2 id="c-loan">Stock loan and locate <span class="path cold">cold path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Source borrowable shares for short sales with locates that are real, lend the firm's and clients' eligible inventory for fee income, and manage the loan lifecycle (rates, collateral, recalls, corporate actions) without ever creating a fail.</dd>
+<dt>Design</dt><dd><ul>
+<li>Inventory model: a per-symbol availability ledger with sources (firm box, client margin accounts eligible under hypothecation rules, external lenders with their offered quantity and rate, agent lender programmes) and reservations (locates granted and not yet used, borrows booked). Availability is a derived quantity, never a cached number.</li>
+<li>Locate engine, the fast part: a locate request is answered from the reservation ledger in under a millisecond with an explicit source. Easy-to-borrow list is regenerated each morning from verified availability and revalidated intraday against actual borrow results; a symbol drops off the list the moment a borrow fails. There is no "assume available" path. This is the direct answer to the synthetic-locate problem: every locate references a specific source and quantity, and unused locates expire at end of day.</li>
+<li>Borrow booking: on short-sale execution, the reservation converts to a borrow request to the source; confirmation books the loan with rate, collateral terms and term. Failure to borrow triggers a buy-in workflow before settlement, with the trading desk alerted immediately.</li>
+<li>Lending desk: publishes offers to borrowers (other broker-dealers, prime brokers), rate-negotiation records, collateral (cash or securities) marked daily, mark-to-market calls generated automatically.</li>
+<li>Recalls: when a lender recalls, the system searches for replacement supply, then forces a buy-in if none is found by the deadline. Recall risk per symbol is a signal fed to the margin engine and the trading desk.</li>
+<li>Corporate actions on loaned stock: manufactured dividends, voting-rights handling, and the tax reporting they generate.</li>
+<li>Fails-to-deliver tracking with the Reg SHO close-out clock per position, and threshold-security handling.</li>
+<li>Rate intelligence: borrow rates per symbol over time are stored and exposed to research; rising borrow cost and falling availability are among the best early signals of crowded shorts, which the market maker consumes as a risk input.</li>
+</ul></dd>
+<dt>Interfaces</dt><dd>Consumes fills and positions from the log; publishes <code>LocateGranted</code>, <code>LocateDenied</code>, <code>EtbListUpdate</code> to the sequencer (so the risk engine's short-sale check is exact); talks to external lenders over their APIs and to the clearing firm's stock-loan service.</dd>
+<dt>Competitive edge</dt><dd>Verified locates and fee income. A stock-loan desk done properly is often the second largest revenue line of a mid-size broker, and doing it honestly is a marketable difference in a market where regulators keep finding the opposite.</dd>
+</dl>
+
+<h2 id="c-margin">Margin engine <span class="path cold">cold path, near real time</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Compute margin requirements per account continuously, generate calls, and feed buying power back to the risk engine.</dd>
+<dt>Design</dt><dd>Rules engine over the position keeper's hot view: Reg T initial and maintenance for US cash equities, house rules on top, concentration and hard-to-borrow add-ons, and portfolio margin later. Recomputes on a timer (seconds) and on large moves; publishes <code>BuyingPowerUpdate</code> to the log so the risk engine's incremental buying power is periodically corrected from a full recomputation. Margin calls are workflow objects with deadlines, escalation and forced liquidation through the router, all logged.</dd>
+<dt>Competitive edge</dt><dd>Intraday accuracy. Most brokers compute margin overnight; being able to extend or restrict intraday on a true picture reduces both losses and needless restrictions.</dd>
+</dl>
+
+<h2 id="c-post">Post-trade, clearing and settlement <span class="path cold">cold path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Get every trade allocated, matched, cleared and settled at T+1 (US since 2024; UK and EU are moving to T+1 in late 2027), and keep the books and records regulators require.</dd>
+<dt>Design</dt><dd><ul>
+<li>Trade capture from the log; allocation for institutional clients (block to sub-accounts) with FIX allocation messages or the client's post-trade platform.</li>
+<li>Clearing interface to the clearing firm (introducing-broker phase): trade files, position and cash files, breaks handling. Designed as an adapter so that the self-clearing phase (NSCC/DTC membership, CNS settlement, DTC deliveries) replaces the adapter rather than the pipeline.</li>
+<li>Cash ledger: double-entry, per account and per currency, with every movement tied to a log event or a documented manual entry with approval.</li>
+<li>Corporate action processing, dividends, interest on cash and margin, fee accruals, and month-end closing.</li>
+<li>Reconciliation suite: positions, cash, open orders, and stock-loan balances against every external record, daily, with break ageing.</li>
+</ul></dd>
+<dt>Build vs buy</dt><dd>Use the clearing firm's stack for settlement in phase one. Build the cash ledger and reconciliation yourself from the start; they are the foundation for self-clearing and for every regulatory examination.</dd>
+</dl>
+
+<h2 id="c-comp">Compliance and surveillance <span class="path cold">cold path</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Detect and prevent market abuse, demonstrate best execution and market-access compliance, and produce every regulatory report from the same source of truth.</dd>
+<dt>Design</dt><dd><ul>
+<li>Surveillance runs as batch and streaming jobs over the log: spoofing and layering patterns, wash trades, marking the close, front-running of client orders by the market maker (this is the one that matters most for a broker with its own MM, and the log makes the ordering provable), insider-dealing screens against restricted lists and news.</li>
+<li>Reg SHO: locate evidence per short sale, close-out tracking, bona-fide-MM exemption validation, Rule 201 handling.</li>
+<li>Best execution: per-order TCA against the NBBO at arrival and at each child release, quarterly Rule 605/606 reports, best-ex committee packs generated automatically.</li>
+<li>Regulatory reporting adapters: CAT (US consolidated audit trail, every order event with the required linkages, which the sequenced log gives you natively), FINRA reporting, MiFIR transaction reporting and RTS 27/28-style execution quality for UK/EU when those markets are added.</li>
+<li>Records retention: immutable, write-once storage of the daily log and captures for the required period, with a tested retrieval procedure.</li>
+</ul></dd>
+<dt>Build vs buy</dt><dd>Buy a surveillance package in the first year (it is a regulatory expectation that the models are recognised); build the data feed into it and the best-ex and Reg SHO tooling, which are firm-specific and where the log gives you an edge.</dd>
+</dl>
+
+<h2 id="c-ref">Reference data <span class="path cold">cold path</span></h2>
+<p>A security master (identifiers, tick sizes, lot sizes, listing venue, trading calendar, halts, corporate-action schedule, ETB and restricted flags), loaded before market open and published to the hot path as a versioned snapshot. Intraday changes are sequenced messages. Sourced from a vendor initially; the master itself is built in-house because every other component keys off its symbol index.</p>
+
+<h2 id="c-acct">Accounts, onboarding, KYC and client applications <span class="path cold">cold path</span></h2>
+<p>Onboarding and KYC/AML through a vendor with an API (identity verification, sanctions and PEP screening, ongoing transaction monitoring), wrapped in an in-house account service that owns account state, entitlements, margin type, and permissions. The API edge (REST and WebSocket) sits in front of the gateways for the web and mobile client, with order entry translated into the same internal messages as FIX. The front end is built later than everything else and deliberately kept thin; the broker's product is execution quality, not a charting app.</p>
+
+<h2 id="c-infra">Platform infrastructure <span class="path hot">hot</span> <span class="path cold">cold</span></h2>
+<dl class="spec">
+<dt>Sequencer</dt><dd>Single-writer shared-memory ring (Aeron-style or in-house), persisted to NVMe with a durable journal, multicast fan-out to other hosts. Primary and standby sequencers with a documented promotion procedure that has been exercised, not just written.</dd>
+<dt>Hot-path hygiene</dt><dd>Isolated cores, huge pages, NUMA-local memory, no allocation after start-up, no syscalls on the hot thread, lock-free single-producer/single-consumer queues, busy-polling, logging via a lock-free ring drained by a separate thread. A latency histogram per stage exported continuously, and a regression test that fails the build if a stage's 99.9th percentile grows.</dd>
+<dt>Hosting</dt><dd>Co-location in the primary US equity data centres (Carteret for Nasdaq, Mahwah for NYSE, Secaucus for Cboe and most ATSs) with cross-connects; a hot standby site; cold path in a cloud region with private connectivity. Disaster recovery is a replay of the log at the standby site, tested quarterly because regulators ask.</dd>
+<dt>Simulation</dt><dd>Venue and feed simulators speaking the real protocols, driven from captured data, with a deterministic clock. Every hot-path component runs against the simulator in CI on a recorded day. This is the single biggest quality multiplier in the design.</dd>
+<dt>Observability</dt><dd>Hardware-timestamped tracing per message across components, per-stage latency histograms, business metrics (fill rate, reject rate, quote uptime, inventory), and alerting with a runbook per alert.</dd>
+<dt>Security</dt><dd>Mutual TLS or dedicated lines for client sessions, HSM-backed key management, signed configuration, four-eyes approval on limit changes and deployments, immutable audit of every operator action.</dd>
+<dt>Control plane</dt><dd>Configuration as code, versioned; deployments that start a new instance replaying the log and then cut over; a kill switch that is one sequenced message and one physical button.</dd>
+</dl>
+
+<h2 id="bvb">Build vs buy</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Component</th><th>Decision</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Sequencer, OMS, risk, router, market maker, position keeper</td><td>Build</td><td>These are the product. Their determinism and replayability are the competitive edge and cannot be bought as a coherent set.</td></tr>
+<tr><td>Feed handlers, book builder</td><td>Build the top venues; vendor SDK for the tail in year one</td><td>Direct-feed latency and full capture on the venues that carry the volume; breadth from a vendor until it is worth replacing.</td></tr>
+<tr><td>FIX engine</td><td>License a low-latency engine or build</td><td>Building a fast, correct FIX engine is six months of a good engineer; licensing is defensible. The binary client protocol is always built.</td></tr>
+<tr><td>Venue gateways</td><td>Build</td><td>Certification and failure handling are firm-specific; native protocols are where latency is won.</td></tr>
+<tr><td>Stock loan</td><td>Build the locate engine and inventory ledger; integrate lender platforms</td><td>The locate integrity is the differentiator; the external lender connectivity is commodity.</td></tr>
+<tr><td>Margin engine</td><td>Build</td><td>Rules are public; the value is running them intraday on true positions.</td></tr>
+<tr><td>Clearing and settlement</td><td>Clearing firm, then self-clear</td><td>Capital and operations before software.</td></tr>
+<tr><td>Cash ledger, reconciliation</td><td>Build</td><td>Foundation for self-clearing and for every examination.</td></tr>
+<tr><td>Surveillance models</td><td>Buy, feed from the log</td><td>Recognised models are a regulatory expectation; the data feed and best-ex tooling are built.</td></tr>
+<tr><td>Regulatory reporting (CAT, MiFIR)</td><td>Build the extraction, use a reporting agent for submission</td><td>Extraction from the log is straightforward; submission plumbing is not worth owning.</td></tr>
+<tr><td>KYC/AML, identity</td><td>Buy</td><td>Commodity with liability attached; vendors carry it better.</td></tr>
+<tr><td>Security master data</td><td>Buy the data, build the master</td><td>Everything keys off the symbol index.</td></tr>
+<tr><td>Client web and mobile</td><td>Build, thin, late</td><td>Not the product; keep it small and honest.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="roadmap">Roadmap</h2>
+<p>Ordered so that each phase is a working system and later phases add rather than replace. The regulatory track runs in parallel from day one and usually sets the pace.</p>
+<ol class="phases">
+<li><div><h4>Foundation and regulatory perimeter</h4><p class="tag">Months 0 to 6</p><p>Broker-dealer registration filed; clearing firm selected and onboarding started; co-location contracts. Engineering: sequencer, message schema, simulator harness, position keeper (hot and cold), reference data, observability. Nothing client-facing yet, but the entire architecture is exercised end to end in simulation on recorded days.</p></div></li>
+<li><div><h4>Agency execution, US equities</h4><p class="tag">Months 6 to 14</p><p>Feed handlers for the top venues plus a vendor tail; client gateways (binary first, FIX second); risk engine; OMS; router with the core strategy library; venue gateways certified on three or four venues; cash ledger, reconciliation, clearing-firm adapter; CAT reporting; surveillance vendor integrated. Go live with a small number of API clients. This phase is the broker.</p></div></li>
+<li><div><h4>Market making and internalisation</h4><p class="tag">Months 14 to 22</p><p>Fair-value research pipeline, quoting engine, internaliser with logged price improvement, adverse-selection scorecards, bona-fide-MM compliance validation, intraday margin engine. Start in a small universe of liquid names and widen with evidence.</p></div></li>
+<li><div><h4>Stock loan desk</h4><p class="tag">Months 18 to 26 (overlaps)</p><p>Inventory ledger, locate engine feeding the risk engine, borrow booking, lender integrations, recall and buy-in workflow, collateral marking, Reg SHO tooling, lending desk offers. The desk becomes a revenue line and the locate integrity becomes a marketing claim you can defend.</p></div></li>
+<li><div><h4>Breadth and self-reliance</h4><p class="tag">Months 26 to 40</p><p>UK and EU equities (MiFIR reporting, new venues, T+1 readiness), US listed options (a second book model and a much harder margin engine), web and mobile client, and the self-clearing project if volume and capital justify it.</p></div></li>
+</ol>
+
+<h2 id="team">Team and cost reality</h2>
+<p>A credible build of phases one to four needs roughly: four to six hot-path C++ engineers, two market-data specialists, three or four cold-path service engineers, two quantitative researchers for the market maker and TCA, two SRE/infra engineers, and on the business side a chief compliance officer from day one, an operations lead, a stock-loan trader, and a market-making trader. Call it fifteen to twenty people for the first two years, plus regulatory capital, co-location, market-data licences, and vendor fees that together typically exceed the engineering payroll.</p>
+<p>What I add to that team: I can write and test each component's code with you, generate the protocol codecs from venue specifications, build the simulators, draft the state machines and their exhaustive tests, produce the TCA and research pipelines, and keep the design coherent as it evolves. Realistic effect is a meaningful reduction in engineering headcount and calendar time, not the elimination of the team, and no reduction at all in the regulatory and operational track.</p>
+
+<div class="note risk">
+<p><strong>Things the software cannot fix.</strong> Regulatory approval timelines; the clearing firm's willingness to onboard a new broker with a market maker and a stock-loan book; the net capital you must hold; the market-data licence costs, which scale with client count; and the fact that venue certification queues are measured in months. Plan these first.</p>
+</div>
+
+<h2 id="edge">Where the edge comes from</h2>
+<ul>
+<li><strong>Deterministic sequenced architecture.</strong> Replay, failover, audit and testing from one design decision. Most brokers retrofit some of this and never get all of it.</li>
+<li><strong>Provable best execution.</strong> The router logs the road not taken. That is a sales argument to institutional clients and a defence to regulators.</li>
+<li><strong>A market maker that is disciplined rather than fast.</strong> Hard inventory limits, offline-fitted models, logged price improvement on internalised flow.</li>
+<li><strong>Honest stock loan.</strong> Every locate references real supply; the desk earns fees and never creates a fail it cannot explain.</li>
+<li><strong>Positions that are never wrong.</strong> One fold over one log, reconciled daily, with breaks owned by people with deadlines.</li>
+<li><strong>Tail latency, not median latency.</strong> Clients measure the worst fifty in a hundred thousand, and the hot-path hygiene rules are aimed at exactly that.</li>
+</ul>
+
+<h2 id="next">What we build first</h2>
+<p>If you want to start now, the right first three pieces are the ones everything else depends on and that produce a testable system by themselves:</p>
+<ol>
+<li><strong>The message schema and sequencer</strong>: the internal binary message definitions (versioned, fixed layout, generated from a single schema file so C++, Go and Python agree), the shared-memory ring, the journal, and the replay tool.</li>
+<li><strong>The position keeper</strong>, hot and cold views, fed by synthetic fills from the simulator, with lot accounting and snapshot/replay tests.</li>
+<li><strong>The simulator harness</strong>: a venue simulator and a feed simulator speaking the internal protocol, a deterministic clock, and a CI job that replays a recorded day and asserts bit-identical state.</li>
+</ol>
+<p>With those three in place, the risk engine, OMS and router each become a few weeks of work against a harness that already tells you whether they are right. Tell me which of the three you want to start with and I will produce the detailed design and the first code for it.</p>
+
+<footer>Design prepared September 2026. Latency figures are engineering targets for a software stack on kernel-bypass hardware, not measurements. Regulatory references are to US rules with UK/EU equivalents noted; confirm current requirements with counsel before filing.</footer>
+</main>
+</div>
+</body>
+</html>

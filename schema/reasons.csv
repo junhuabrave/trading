@@ -1,0 +1,33 @@
+code,name,family,description
+0,NoReason,none,no reason
+100,UnknownSymbol,symbol,symbolIdx has no record
+101,SymbolNotTradable,symbol,status is not Active
+102,SymbolHalted,symbol,trading halted or paused on the primary venue
+103,SymbolRestricted,symbol,on the restricted list
+104,UnknownAccount,account,accountIdx has no record
+105,AccountKilled,account,account kill switch active
+106,FirmKilled,account,firm kill switch active
+107,StrategyKilled,account,strategy kill switch active
+110,QtyZero,order,qty must be positive
+111,MaxOrderQty,order,qty exceeds limit
+112,MaxOrderNotional,order,qty x price exceeds limit
+113,PriceOutsideCollar,order,limit price too far from reference
+114,PriceNotOnTick,order,price not a multiple of the tick for that price band
+115,MissingPrice,order,limit or stop order without a price
+116,BadSide,order,side unset
+117,MinQtyExceedsQty,order,minQty greater than qty
+120,ShortNotShortable,short,symbol not shortable
+121,LocateRequired,short,short sale needs a locate and symbol is not easy to borrow
+122,LocateUnknown,short,locateId not granted
+123,LocateInsufficient,short,locate has less remaining qty than the order
+124,LocateExpired,short,locate expired
+125,LocateWrongSymbol,short,locate is for a different symbol or account
+126,SsrPriceTest,short,short sale at or below the bid while SSR is active
+130,InsufficientBuyingPower,credit,margin requirement exceeds available buying power
+131,GrossExposure,credit,would exceed gross exposure limit
+132,NetExposure,credit,would exceed net exposure limit
+133,MaxOpenOrders,credit,too many open orders
+134,MsgRateExceeded,credit,per-account message rate exceeded
+140,DuplicateClOrdId,session,clOrdId already used on this session
+141,UnknownOrder,session,cancel or replace for an order we do not know
+142,OrderNotLive,session,order is not in a live state

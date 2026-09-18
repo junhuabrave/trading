@@ -1,0 +1,6 @@
+build/
+gen/cpp/
+gen/py/
+gen/layout.md
+__pycache__/
+*.tampered

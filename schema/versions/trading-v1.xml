@@ -1,0 +1,1162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  trading.xml : the single schema for the broker-dealer trading stack.
+
+  Rules (enforced by tools/schema_check.py):
+    * fields are append-only; new fields carry sinceVersion and a default (zero)
+    * template ids, field ids and enum values are never reused or renumbered
+    * a field's type never changes; add a new field and deprecate the old one
+    * every message is naturally aligned and padded to a multiple of 16 bytes
+    * declared blockLength / composite length must equal the computed layout
+
+  Conventions:
+    Price   int64  fixed point, 1e-8 units
+    Qty     int64  units of the instrument's minimum increment (see qtyScale)
+    Ts      int64  nanoseconds since Unix epoch, UTC
+    Seq     uint64 sequencer-assigned; 0 = not yet sequenced
+    SymIdx  uint32 stable index assigned by the security master, never reused
+    AcctIdx uint32 stable account index, never reused
+    enums   uint8, value 0 always means "unset"
+    strings fixed char[N], null padded, ASCII, reference/cold path only
+-->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="trading" id="1" version="1"
+    semanticVersion="2026.09" description="Broker-dealer trading stack schema"
+    byteOrder="littleEndian" headerType="FrameHeader">
+  <types>
+    <!-- ================= scalar aliases ================= -->
+    <type name="Price"    primitiveType="int64"  description="1e-8 units"/>
+    <type name="Qty"      primitiveType="int64"/>
+    <type name="Ts"       primitiveType="int64"  description="ns since epoch UTC"/>
+    <type name="Seq"      primitiveType="uint64"/>
+    <type name="SymIdx"   primitiveType="uint32"/>
+    <type name="AcctIdx"  primitiveType="uint32"/>
+    <type name="VenueId"  primitiveType="uint16"/>
+    <type name="Id64"     primitiveType="uint64" description="(sourceId&lt;&lt;48)|counter"/>
+    <type name="Money"    primitiveType="int64"  description="1e-8 units in stated currency"/>
+    <type name="Ccy"      primitiveType="uint16" description="ISO 4217 numeric"/>
+    <type name="Ticker"   primitiveType="char" length="16"/>
+    <type name="Cusip"    primitiveType="char" length="9"/>
+    <type name="Isin"     primitiveType="char" length="12"/>
+    <type name="Figi"     primitiveType="char" length="12"/>
+    <type name="Sedol"    primitiveType="char" length="7"/>
+    <type name="Name64"   primitiveType="char" length="64"/>
+    <type name="Name32"   primitiveType="char" length="32"/>
+    <type name="Mic"      primitiveType="char" length="4"/>
+    <type name="VenueExecId" primitiveType="char" length="20"/>
+    <type name="Hash256"  primitiveType="uint8" length="32"/>
+    <type name="Pad4"     primitiveType="uint8" length="4"/>
+    <type name="Pad8"     primitiveType="uint8" length="8"/>
+
+    <!-- ================= frame header (48 bytes, version 0, never changes) ================= -->
+    <composite name="FrameHeader" length="48">
+      <type name="frameLength"   primitiveType="uint32"/>
+      <type name="templateId"    primitiveType="uint16"/>
+      <type name="schemaVersion" primitiveType="uint16"/>
+      <type name="seq"           primitiveType="uint64"/>
+      <type name="seqTs"         primitiveType="int64"/>
+      <type name="originTs"      primitiveType="int64"/>
+      <type name="causeSeq"      primitiveType="uint64"/>
+      <type name="sourceId"      primitiveType="uint16"/>
+      <type name="flags"         primitiveType="uint16"/>
+      <type name="streamId"      primitiveType="uint32"/>
+    </composite>
+
+    <!-- ================= enums ================= -->
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">1</validValue>
+      <validValue name="Sell">2</validValue>
+      <validValue name="SellShort">3</validValue>
+      <validValue name="SellShortExempt">4</validValue>
+    </enum>
+    <enum name="BookSide" encodingType="uint8">
+      <validValue name="Bid">1</validValue>
+      <validValue name="Ask">2</validValue>
+    </enum>
+    <enum name="OrdType" encodingType="uint8">
+      <validValue name="Market">1</validValue>
+      <validValue name="Limit">2</validValue>
+      <validValue name="Stop">3</validValue>
+      <validValue name="StopLimit">4</validValue>
+      <validValue name="Pegged">5</validValue>
+    </enum>
+    <enum name="Tif" encodingType="uint8">
+      <validValue name="Day">1</validValue>
+      <validValue name="Ioc">2</validValue>
+      <validValue name="Fok">3</validValue>
+      <validValue name="Gtc">4</validValue>
+      <validValue name="AtOpen">5</validValue>
+      <validValue name="AtClose">6</validValue>
+    </enum>
+    <enum name="PegType" encodingType="uint8">
+      <validValue name="Primary">1</validValue>
+      <validValue name="Market">2</validValue>
+      <validValue name="Midpoint">3</validValue>
+    </enum>
+    <enum name="ExecType" encodingType="uint8">
+      <validValue name="New">1</validValue>
+      <validValue name="PartialFill">2</validValue>
+      <validValue name="Fill">3</validValue>
+      <validValue name="Cancelled">4</validValue>
+      <validValue name="Replaced">5</validValue>
+      <validValue name="Rejected">6</validValue>
+      <validValue name="Expired">7</validValue>
+      <validValue name="TradeCorrect">8</validValue>
+      <validValue name="TradeBust">9</validValue>
+      <validValue name="PendingCancel">10</validValue>
+      <validValue name="PendingReplace">11</validValue>
+    </enum>
+    <enum name="OrdStatus" encodingType="uint8">
+      <validValue name="PendingNew">1</validValue>
+      <validValue name="Live">2</validValue>
+      <validValue name="PartiallyFilled">3</validValue>
+      <validValue name="Filled">4</validValue>
+      <validValue name="Cancelled">5</validValue>
+      <validValue name="Rejected">6</validValue>
+      <validValue name="Expired">7</validValue>
+      <validValue name="PendingCancel">8</validValue>
+      <validValue name="PendingReplace">9</validValue>
+    </enum>
+    <enum name="Liquidity" encodingType="uint8">
+      <validValue name="Added">1</validValue>
+      <validValue name="Removed">2</validValue>
+      <validValue name="Routed">3</validValue>
+      <validValue name="Auction">4</validValue>
+      <validValue name="Internalized">5</validValue>
+    </enum>
+    <enum name="RiskVerdict" encodingType="uint8">
+      <validValue name="Accept">1</validValue>
+      <validValue name="Reject">2</validValue>
+    </enum>
+    <enum name="BookAction" encodingType="uint8">
+      <validValue name="Set">1</validValue>
+      <validValue name="Delete">2</validValue>
+      <validValue name="ClearBook">3</validValue>
+      <validValue name="ClearSide">4</validValue>
+    </enum>
+    <enum name="TradingStatus" encodingType="uint8">
+      <validValue name="Trading">1</validValue>
+      <validValue name="Halted">2</validValue>
+      <validValue name="Paused">3</validValue>
+      <validValue name="Auction">4</validValue>
+      <validValue name="Closed">5</validValue>
+      <validValue name="PreOpen">6</validValue>
+    </enum>
+    <enum name="SymbolStatusCode" encodingType="uint8">
+      <validValue name="Active">1</validValue>
+      <validValue name="Halted">2</validValue>
+      <validValue name="Suspended">3</validValue>
+      <validValue name="Delisted">4</validValue>
+      <validValue name="PendingListing">5</validValue>
+    </enum>
+    <enum name="InstrumentType" encodingType="uint8">
+      <validValue name="CommonStock">1</validValue>
+      <validValue name="Etf">2</validValue>
+      <validValue name="Adr">3</validValue>
+      <validValue name="PreferredStock">4</validValue>
+      <validValue name="Warrant">5</validValue>
+      <validValue name="Right">6</validValue>
+      <validValue name="Unit">7</validValue>
+      <validValue name="Option">8</validValue>
+      <validValue name="Future">9</validValue>
+    </enum>
+    <enum name="ListId" encodingType="uint8">
+      <validValue name="EasyToBorrow">1</validValue>
+      <validValue name="HardToBorrow">2</validValue>
+      <validValue name="Restricted">3</validValue>
+      <validValue name="Threshold">4</validValue>
+      <validValue name="Watch">5</validValue>
+    </enum>
+    <enum name="ListOp" encodingType="uint8">
+      <validValue name="Add">1</validValue>
+      <validValue name="Remove">2</validValue>
+    </enum>
+    <enum name="CorpActionType" encodingType="uint8">
+      <validValue name="Split">1</validValue>
+      <validValue name="ReverseSplit">2</validValue>
+      <validValue name="SymbolChange">3</validValue>
+      <validValue name="Merger">4</validValue>
+      <validValue name="Delist">5</validValue>
+      <validValue name="CashDividend">6</validValue>
+      <validValue name="StockDividend">7</validValue>
+      <validValue name="SpinOff">8</validValue>
+    </enum>
+    <enum name="VenueType" encodingType="uint8">
+      <validValue name="Exchange">1</validValue>
+      <validValue name="Ats">2</validValue>
+      <validValue name="Wholesaler">3</validValue>
+      <validValue name="Internal">4</validValue>
+    </enum>
+    <enum name="AccountType" encodingType="uint8">
+      <validValue name="Cash">1</validValue>
+      <validValue name="Margin">2</validValue>
+      <validValue name="PortfolioMargin">3</validValue>
+      <validValue name="Firm">4</validValue>
+    </enum>
+    <enum name="ComponentRole" encodingType="uint8">
+      <validValue name="Sequencer">1</validValue>
+      <validValue name="Gateway">2</validValue>
+      <validValue name="Risk">3</validValue>
+      <validValue name="Oms">4</validValue>
+      <validValue name="Router">5</validValue>
+      <validValue name="MarketMaker">6</validValue>
+      <validValue name="VenueGateway">7</validValue>
+      <validValue name="FeedHandler">8</validValue>
+      <validValue name="PositionKeeper">9</validValue>
+      <validValue name="StockLoan">10</validValue>
+      <validValue name="Margin">11</validValue>
+      <validValue name="Compliance">12</validValue>
+      <validValue name="Control">13</validValue>
+      <validValue name="Strategy">14</validValue>
+      <validValue name="SecMaster">15</validValue>
+      <validValue name="Simulator">16</validValue>
+    </enum>
+    <enum name="ComponentState" encodingType="uint8">
+      <validValue name="Starting">1</validValue>
+      <validValue name="Replaying">2</validValue>
+      <validValue name="Live">3</validValue>
+      <validValue name="Standby">4</validValue>
+      <validValue name="Degraded">5</validValue>
+      <validValue name="Stopped">6</validValue>
+    </enum>
+    <enum name="LocateResult" encodingType="uint8">
+      <validValue name="Granted">1</validValue>
+      <validValue name="Partial">2</validValue>
+      <validValue name="Denied">3</validValue>
+    </enum>
+    <enum name="Severity" encodingType="uint8">
+      <validValue name="Info">1</validValue>
+      <validValue name="Warning">2</validValue>
+      <validValue name="Critical">3</validValue>
+    </enum>
+    <enum name="ParamType" encodingType="uint8">
+      <validValue name="Int">1</validValue>
+      <validValue name="Fixed8">2</validValue>
+      <validValue name="Bool">3</validValue>
+    </enum>
+
+    <!-- ================= bit sets ================= -->
+    <set name="FrameFlags" encodingType="uint16">
+      <choice name="replayed">0</choice>
+      <choice name="simulated">1</choice>
+      <choice name="lastInBatch">2</choice>
+      <choice name="checkpointBoundary">3</choice>
+    </set>
+    <set name="OrderFlags" encodingType="uint8">
+      <choice name="locateAttached">0</choice>
+      <choice name="noInternalize">1</choice>
+      <choice name="postOnly">2</choice>
+      <choice name="iso">3</choice>
+      <choice name="allowDark">4</choice>
+    </set>
+    <set name="SymbolFlags" encodingType="uint32">
+      <choice name="etb">0</choice>
+      <choice name="hardToBorrow">1</choice>
+      <choice name="restricted">2</choice>
+      <choice name="threshold">3</choice>
+      <choice name="ssrActive">4</choice>
+      <choice name="marginable">5</choice>
+      <choice name="shortable">6</choice>
+      <choice name="fractionalAllowed">7</choice>
+      <choice name="testSymbol">8</choice>
+      <choice name="corpActionToday">9</choice>
+    </set>
+    <set name="BookFlags" encodingType="uint8">
+      <choice name="endOfPacket">0</choice>
+      <choice name="fromRecovery">1</choice>
+    </set>
+    <set name="CalendarFlags" encodingType="uint16">
+      <choice name="holiday">0</choice>
+      <choice name="earlyClose">1</choice>
+      <choice name="halfDay">2</choice>
+    </set>
+    <set name="SymbolUpdateMask" encodingType="uint32">
+      <choice name="status">0</choice>
+      <choice name="tickTableId">1</choice>
+      <choice name="lotSize">2</choice>
+      <choice name="flags">3</choice>
+      <choice name="refPrice">4</choice>
+      <choice name="adv30">5</choice>
+      <choice name="marginClass">6</choice>
+      <choice name="sharesOutstanding">7</choice>
+    </set>
+
+    <!-- ================= snapshot record composites ================= -->
+    <composite name="SymbolRecord" length="256">
+      <type name="symbolIdx"        primitiveType="uint32"/>
+      <type name="status"           primitiveType="uint8"/>
+      <type name="instrumentType"   primitiveType="uint8"/>
+      <type name="listingVenue"     primitiveType="uint16"/>
+      <type name="tickTableId"      primitiveType="uint16"/>
+      <type name="currency"         primitiveType="uint16"/>
+      <type name="lotSize"          primitiveType="uint32"/>
+      <type name="flags"            primitiveType="uint32"/>
+      <type name="priceScale"       primitiveType="uint8"/>
+      <type name="qtyScale"         primitiveType="uint8"/>
+      <type name="settlementDays"   primitiveType="uint8"/>
+      <type name="marginClass"      primitiveType="uint8"/>
+      <type name="refPrice"         primitiveType="int64"/>
+      <type name="prevClose"        primitiveType="int64"/>
+      <type name="adv30"            primitiveType="int64"/>
+      <type name="sharesOutstanding" primitiveType="int64"/>
+      <type name="issuerId"         primitiveType="uint32"/>
+      <type name="sector"           primitiveType="uint16"/>
+      <type name="shareClass"       primitiveType="uint8"/>
+      <type name="listingCount"     primitiveType="uint8"/>
+      <type name="listingOffset"    primitiveType="uint32"/>
+      <type name="underlyingIdx"    primitiveType="uint32"/>
+      <type name="ticker"           primitiveType="char" length="16"/>
+      <type name="cusip"            primitiveType="char" length="9"/>
+      <type name="isin"             primitiveType="char" length="12"/>
+      <type name="figi"             primitiveType="char" length="12"/>
+      <type name="sedol"            primitiveType="char" length="7"/>
+      <type name="name"             primitiveType="char" length="64"/>
+      <type name="validFrom"        primitiveType="int64"/>
+      <type name="lastCorpActionId" primitiveType="uint64"/>
+      <type name="reserved"         primitiveType="uint8" length="48"/>
+    </composite>
+
+    <composite name="ListingRecord" length="64">
+      <type name="symbolIdx"        primitiveType="uint32"/>
+      <type name="venueId"          primitiveType="uint16"/>
+      <type name="tickTableId"      primitiveType="uint16"/>
+      <type name="tradable"         primitiveType="uint8"/>
+      <type name="reserved1"        primitiveType="uint8" length="7"/>
+      <type name="venueSymbol"      primitiveType="char" length="16"/>
+      <type name="validFrom"        primitiveType="int64"/>
+      <type name="reserved2"        primitiveType="uint8" length="24"/>
+    </composite>
+
+    <composite name="VenueRecord" length="256">
+      <type name="venueId"          primitiveType="uint16"/>
+      <type name="venueType"        primitiveType="uint8"/>
+      <type name="protocol"         primitiveType="uint8"/>
+      <type name="cancelOnDisconnect" primitiveType="uint8"/>
+      <type name="reserved1"        primitiveType="uint8" length="3"/>
+      <type name="mic"              primitiveType="char" length="4"/>
+      <type name="reserved2"        primitiveType="uint8" length="4"/>
+      <type name="name"             primitiveType="char" length="32"/>
+      <type name="sessionIds"       primitiveType="uint32" length="8"/>
+      <type name="oneWayLatencyNs"  primitiveType="int64"/>
+      <type name="reserved3"        primitiveType="uint8" length="168"/>
+    </composite>
+
+    <composite name="TickTableRecord" length="272">
+      <type name="tickTableId"      primitiveType="uint16"/>
+      <type name="bandCount"        primitiveType="uint8"/>
+      <type name="reserved"         primitiveType="uint8" length="13"/>
+      <type name="bands"            primitiveType="int64" length="32" description="16 pairs of (floor, tick)"/>
+    </composite>
+
+    <composite name="CalendarRecord" length="32">
+      <type name="venueId"          primitiveType="uint16"/>
+      <type name="flags"            primitiveType="uint16"/>
+      <type name="date"             primitiveType="uint32" description="yyyymmdd"/>
+      <type name="openTs"           primitiveType="int64"/>
+      <type name="closeTs"          primitiveType="int64"/>
+      <type name="auctionTs"        primitiveType="int64"/>
+    </composite>
+
+    <composite name="CorporateActionRecord" length="128">
+      <type name="actionId"         primitiveType="uint64"/>
+      <type name="symbolIdx"        primitiveType="uint32"/>
+      <type name="newSymbolIdx"     primitiveType="uint32"/>
+      <type name="actionType"       primitiveType="uint8"/>
+      <type name="applied"          primitiveType="uint8"/>
+      <type name="reserved1"        primitiveType="uint8" length="2"/>
+      <type name="exDate"           primitiveType="uint32" description="yyyymmdd"/>
+      <type name="recordDate"       primitiveType="uint32"/>
+      <type name="payDate"          primitiveType="uint32"/>
+      <type name="ratioNum"         primitiveType="int64"/>
+      <type name="ratioDen"         primitiveType="int64"/>
+      <type name="cashAmount"       primitiveType="int64"/>
+      <type name="currency"         primitiveType="uint16"/>
+      <type name="reserved2"        primitiveType="uint8" length="6"/>
+      <type name="effectiveSeq"     primitiveType="uint64"/>
+      <type name="reserved3"        primitiveType="uint8" length="56"/>
+    </composite>
+
+    <composite name="FeeRecord" length="128">
+      <type name="venueId"          primitiveType="uint16"/>
+      <type name="feeCode"          primitiveType="uint16"/>
+      <type name="liquidity"        primitiveType="uint8"/>
+      <type name="reserved1"        primitiveType="uint8" length="3"/>
+      <type name="feePerShare"      primitiveType="int64" description="1e-8 USD, negative = rebate"/>
+      <type name="tierThreshold"    primitiveType="int64"/>
+      <type name="capPerOrder"      primitiveType="int64"/>
+      <type name="effectiveDate"    primitiveType="uint32"/>
+      <type name="reserved2"        primitiveType="uint8" length="4"/>
+      <type name="reserved3"        primitiveType="uint8" length="88"/>
+    </composite>
+
+    <composite name="AccountRecord" length="128">
+      <type name="accountIdx"       primitiveType="uint32"/>
+      <type name="accountType"      primitiveType="uint8"/>
+      <type name="reserved1"        primitiveType="uint8" length="1"/>
+      <type name="routingProfile"   primitiveType="uint16"/>
+      <type name="limitSetId"       primitiveType="uint32"/>
+      <type name="entitlements"     primitiveType="uint32"/>
+      <type name="baseCurrency"     primitiveType="uint16"/>
+      <type name="reserved2"        primitiveType="uint8" length="6"/>
+      <type name="externalRef"      primitiveType="char" length="32"/>
+      <type name="reserved3"        primitiveType="uint8" length="72"/>
+    </composite>
+
+    <composite name="ComponentRecord" length="64">
+      <type name="sourceId"         primitiveType="uint16"/>
+      <type name="role"             primitiveType="uint8"/>
+      <type name="reserved1"        primitiveType="uint8" length="1"/>
+      <type name="streamMask"       primitiveType="uint32"/>
+      <type name="name"             primitiveType="char" length="32"/>
+      <type name="reserved2"        primitiveType="uint8" length="24"/>
+    </composite>
+
+    <composite name="TickerIndexEntry" length="24">
+      <type name="ticker"           primitiveType="char" length="16"/>
+      <type name="symbolIdx"        primitiveType="uint32"/>
+      <type name="reserved"         primitiveType="uint8" length="4"/>
+    </composite>
+
+    <composite name="SectionEntry" length="64">
+      <type name="sectionType"      primitiveType="uint16"/>
+      <type name="reserved1"        primitiveType="uint8" length="2"/>
+      <type name="recordSize"       primitiveType="uint32"/>
+      <type name="recordCount"      primitiveType="uint32"/>
+      <type name="reserved2"        primitiveType="uint8" length="4"/>
+      <type name="offset"           primitiveType="uint64"/>
+      <type name="sectionHash"      primitiveType="uint8" length="32"/>
+      <type name="reserved3"        primitiveType="uint8" length="8"/>
+    </composite>
+
+    <composite name="SourceEntry" length="48">
+      <type name="sourceId"         primitiveType="uint16"/>
+      <type name="reserved1"        primitiveType="uint8" length="6"/>
+      <type name="sourceTs"         primitiveType="int64"/>
+      <type name="fileHash"         primitiveType="uint8" length="32"/>
+    </composite>
+
+    <!-- 4096 byte page: fixed prefix + 32 sections + 16 sources + content hash -->
+    <composite name="SnapshotHeader" length="4096">
+      <type name="magic"            primitiveType="char" length="4" description="RFDS"/>
+      <type name="formatVersion"    primitiveType="uint32"/>
+      <type name="schemaVersion"    primitiveType="uint16"/>
+      <type name="sectionCount"     primitiveType="uint16"/>
+      <type name="businessDate"     primitiveType="uint32" description="yyyymmdd"/>
+      <type name="snapshotVersion"  primitiveType="uint32"/>
+      <type name="sourceCount"      primitiveType="uint16"/>
+      <type name="reserved1"        primitiveType="uint8" length="2"/>
+      <type name="generatedTs"      primitiveType="int64"/>
+      <type name="fileSize"         primitiveType="uint64"/>
+      <type name="reserved2"        primitiveType="uint8" length="24"/>
+      <type name="contentHash"      primitiveType="uint8" length="32"/>
+      <type name="sections"         primitiveType="uint8" length="2048" description="32 x SectionEntry"/>
+      <type name="sources"          primitiveType="uint8" length="768"  description="16 x SourceEntry"/>
+      <type name="reserved3"        primitiveType="uint8" length="1184"/>
+    </composite>
+  </types>
+
+  <!-- =====================================================================
+       Control (1-99)
+       ===================================================================== -->
+  <sbe:message name="Heartbeat" id="1" blockLength="16">
+    <field name="componentSeq"   id="1" type="Seq"/>
+    <field name="state"          id="2" type="ComponentState"/>
+    <field name="pad"            id="3" type="uint8" length="7"/>
+  </sbe:message>
+
+  <sbe:message name="SessionStart" id="7" blockLength="64">
+    <field name="businessDate"    id="1" type="uint32"/>
+    <field name="snapshotVersion" id="2" type="uint32"/>
+    <field name="snapshotHash"    id="3" type="Hash256"/>
+    <field name="schemaVersion"   id="4" type="uint16"/>
+    <field name="pad"             id="5" type="uint8" length="6"/>
+    <field name="sessionTs"       id="6" type="Ts"/>
+    <field name="pad2"            id="7" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="Checkpoint" id="8" blockLength="48">
+    <field name="checkpointId"   id="1" type="uint64"/>
+    <field name="stateHash"      id="2" type="Hash256"/>
+    <field name="sourceSeq"      id="3" type="Seq"/>
+  </sbe:message>
+
+  <sbe:message name="KillSwitch" id="9" blockLength="16">
+    <field name="accountIdx"     id="1" type="AcctIdx" description="0 = firm-wide"/>
+    <field name="strategyId"     id="2" type="uint16" description="0 = all"/>
+    <field name="reason"         id="3" type="uint16"/>
+    <field name="operatorId"     id="4" type="uint32"/>
+    <field name="pad"            id="5" type="Pad4"/>
+  </sbe:message>
+
+  <sbe:message name="ComponentStatus" id="10" blockLength="32">
+    <field name="state"          id="1" type="ComponentState"/>
+    <field name="role"           id="2" type="ComponentRole"/>
+    <field name="pad"            id="3" type="uint8" length="6"/>
+    <field name="lastSeq"        id="4" type="Seq"/>
+    <field name="stateHashLow"   id="5" type="uint64"/>
+    <field name="uptimeNs"       id="6" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="Timer" id="11" blockLength="16">
+    <field name="strategyId"     id="1" type="uint16"/>
+    <field name="pad"            id="2" type="uint8" length="2"/>
+    <field name="timerId"        id="3" type="uint32"/>
+    <field name="fireTs"         id="4" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="MdWatermark" id="12" blockLength="112">
+    <field name="count"          id="1" type="uint8"/>
+    <field name="pad"            id="2" type="uint8" length="7"/>
+    <field name="streamIds"      id="3" type="uint32" length="8"/>
+    <field name="seqs"           id="4" type="uint64" length="8"/>
+    <field name="pad2"           id="5" type="Pad8"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Orders (100-199)
+       ===================================================================== -->
+  <sbe:message name="NewOrder" id="100" blockLength="128">
+    <field name="clOrdId"        id="1"  type="uint64"/>
+    <field name="orderId"        id="2"  type="Id64"/>
+    <field name="accountIdx"     id="3"  type="AcctIdx"/>
+    <field name="symbolIdx"      id="4"  type="SymIdx"/>
+    <field name="side"           id="5"  type="Side"/>
+    <field name="ordType"        id="6"  type="OrdType"/>
+    <field name="tif"            id="7"  type="Tif"/>
+    <field name="orderFlags"     id="8"  type="OrderFlags"/>
+    <field name="pegType"        id="9"  type="PegType"/>
+    <field name="pad"            id="10" type="uint8" length="3"/>
+    <field name="qty"            id="11" type="Qty"/>
+    <field name="price"          id="12" type="Price"/>
+    <field name="stopPrice"      id="13" type="Price"/>
+    <field name="displayQty"     id="14" type="Qty"/>
+    <field name="minQty"         id="15" type="Qty"/>
+    <field name="locateId"       id="16" type="Id64"/>
+    <field name="routingProfile" id="17" type="uint16"/>
+    <field name="strategyId"     id="18" type="uint16"/>
+    <field name="sessionId"      id="19" type="uint32"/>
+    <field name="pegOffset"      id="20" type="Price"/>
+    <field name="clientTag"      id="21" type="uint64"/>
+    <field name="pad2"           id="22" type="uint8" length="24"/>
+  </sbe:message>
+
+  <sbe:message name="CancelOrder" id="101" blockLength="32">
+    <field name="clOrdId"        id="1" type="uint64"/>
+    <field name="orderId"        id="2" type="Id64"/>
+    <field name="origClOrdId"    id="3" type="uint64"/>
+    <field name="accountIdx"     id="4" type="AcctIdx"/>
+    <field name="sessionId"      id="5" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="ReplaceOrder" id="102" blockLength="64">
+    <field name="clOrdId"        id="1" type="uint64"/>
+    <field name="orderId"        id="2" type="Id64"/>
+    <field name="origClOrdId"    id="3" type="uint64"/>
+    <field name="accountIdx"     id="4" type="AcctIdx"/>
+    <field name="sessionId"      id="5" type="uint32"/>
+    <field name="qty"            id="6" type="Qty"/>
+    <field name="price"          id="7" type="Price"/>
+    <field name="stopPrice"      id="8" type="Price"/>
+    <field name="displayQty"     id="9" type="Qty"/>
+  </sbe:message>
+
+  <sbe:message name="RiskDecision" id="103" blockLength="48">
+    <field name="orderId"        id="1" type="Id64"/>
+    <field name="accountIdx"     id="2" type="AcctIdx"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="verdict"        id="4" type="RiskVerdict"/>
+    <field name="pad"            id="5" type="uint8"/>
+    <field name="reason"         id="6" type="uint16"/>
+    <field name="checkMask"      id="7" type="uint32" description="which checks ran"/>
+    <field name="buyingPowerAfter" id="8" type="Money"/>
+    <field name="notional"       id="9" type="Money"/>
+    <field name="pad2"           id="10" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="OrderState" id="104" blockLength="64">
+    <field name="orderId"        id="1" type="Id64"/>
+    <field name="parentOrderId"  id="2" type="Id64"/>
+    <field name="status"         id="3" type="OrdStatus"/>
+    <field name="prevStatus"     id="4" type="OrdStatus"/>
+    <field name="pad"            id="5" type="uint8" length="6"/>
+    <field name="leavesQty"      id="6" type="Qty"/>
+    <field name="cumQty"         id="7" type="Qty"/>
+    <field name="avgPx"          id="8" type="Price"/>
+    <field name="reason"         id="9" type="uint16"/>
+    <field name="pad2"           id="10" type="uint8" length="14"/>
+  </sbe:message>
+
+  <sbe:message name="ChildOrder" id="105" blockLength="80">
+    <field name="childOrderId"   id="1" type="Id64"/>
+    <field name="parentOrderId"  id="2" type="Id64"/>
+    <field name="accountIdx"     id="3" type="AcctIdx"/>
+    <field name="symbolIdx"      id="4" type="SymIdx"/>
+    <field name="venueId"        id="5" type="VenueId"/>
+    <field name="side"           id="6" type="Side"/>
+    <field name="ordType"        id="7" type="OrdType"/>
+    <field name="tif"            id="8" type="Tif"/>
+    <field name="orderFlags"     id="9" type="OrderFlags"/>
+    <field name="strategyTag"    id="10" type="uint16" description="router strategy that created it"/>
+    <field name="qty"            id="11" type="Qty"/>
+    <field name="price"          id="12" type="Price"/>
+    <field name="displayQty"     id="13" type="Qty"/>
+    <field name="releaseTs"      id="14" type="Ts" description="latency-aware release time"/>
+    <field name="pad"            id="15" type="Pad8"/>
+    <field name="pad2"           id="16" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="VenueAck" id="106" blockLength="48">
+    <field name="childOrderId"   id="1" type="Id64"/>
+    <field name="venueId"        id="2" type="VenueId"/>
+    <field name="pad"            id="3" type="uint8" length="6"/>
+    <field name="venueOrderId"   id="4" type="VenueExecId"/>
+    <field name="pad2"           id="5" type="Pad4"/>
+    <field name="venueTs"        id="6" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="VenueReject" id="107" blockLength="32">
+    <field name="childOrderId"   id="1" type="Id64"/>
+    <field name="venueId"        id="2" type="VenueId"/>
+    <field name="reason"         id="3" type="uint16"/>
+    <field name="venueReason"    id="4" type="uint32"/>
+    <field name="venueTs"        id="5" type="Ts"/>
+    <field name="pad"            id="6" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="ExecReport" id="108" blockLength="176">
+    <field name="orderId"        id="1"  type="Id64"/>
+    <field name="clOrdId"        id="2"  type="uint64"/>
+    <field name="execId"         id="3"  type="Id64"/>
+    <field name="childOrderId"   id="4"  type="Id64"/>
+    <field name="accountIdx"     id="5"  type="AcctIdx"/>
+    <field name="symbolIdx"      id="6"  type="SymIdx"/>
+    <field name="execType"       id="7"  type="ExecType"/>
+    <field name="ordStatus"      id="8"  type="OrdStatus"/>
+    <field name="side"           id="9"  type="Side"/>
+    <field name="liquidityFlag"  id="10" type="Liquidity"/>
+    <field name="venueId"        id="11" type="VenueId"/>
+    <field name="feeCode"        id="12" type="uint16"/>
+    <field name="lastQty"        id="13" type="Qty"/>
+    <field name="lastPx"         id="14" type="Price"/>
+    <field name="leavesQty"      id="15" type="Qty"/>
+    <field name="cumQty"         id="16" type="Qty"/>
+    <field name="avgPx"          id="17" type="Price"/>
+    <field name="fee"            id="18" type="Money"/>
+    <field name="nbboBid"        id="19" type="Price"/>
+    <field name="nbboAsk"        id="20" type="Price"/>
+    <field name="venueExecId"    id="21" type="VenueExecId"/>
+    <field name="rejectReason"   id="22" type="uint16"/>
+    <field name="pad"            id="23" type="uint8" length="2"/>
+    <field name="venueTs"        id="24" type="Ts"/>
+    <field name="clientTag"      id="25" type="uint64"/>
+    <field name="pad2"           id="26" type="uint8" length="24"/>
+  </sbe:message>
+
+  <sbe:message name="RouteDecision" id="109" blockLength="96">
+    <field name="parentOrderId"  id="1" type="Id64"/>
+    <field name="strategyTag"    id="2" type="uint16"/>
+    <field name="childCount"     id="3" type="uint8"/>
+    <field name="pad"            id="4" type="uint8" length="5"/>
+    <field name="venueIds"       id="5" type="uint16" length="8"/>
+    <field name="qtys"           id="6" type="int64"  length="4"/>
+    <field name="expectedCost"   id="7" type="Money"/>
+    <field name="rejectedAltCost" id="8" type="Money" description="cost of the best alternative not taken"/>
+    <field name="rejectedAltVenue" id="9" type="VenueId"/>
+    <field name="reason"         id="10" type="uint16"/>
+    <field name="pad2"           id="11" type="uint8" length="12"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Market data (200-299)
+       ===================================================================== -->
+  <sbe:message name="BookDelta" id="200" blockLength="48">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="venueId"        id="2" type="VenueId"/>
+    <field name="action"         id="3" type="BookAction"/>
+    <field name="side"           id="4" type="BookSide"/>
+    <field name="price"          id="5" type="Price"/>
+    <field name="qty"            id="6" type="Qty" description="absolute level qty after change"/>
+    <field name="orderCount"     id="7" type="uint32"/>
+    <field name="flags"          id="8" type="BookFlags"/>
+    <field name="pad"            id="9" type="uint8" length="3"/>
+    <field name="venueSeq"       id="10" type="uint64"/>
+    <field name="venueTs"        id="11" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="Trade" id="201" blockLength="64">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="venueId"        id="2" type="VenueId"/>
+    <field name="aggressorSide"  id="3" type="BookSide"/>
+    <field name="conditions"     id="4" type="uint8"/>
+    <field name="price"          id="5" type="Price"/>
+    <field name="qty"            id="6" type="Qty"/>
+    <field name="venueSeq"       id="7" type="uint64"/>
+    <field name="venueTs"        id="8" type="Ts"/>
+    <field name="tradeId"        id="9" type="uint64"/>
+    <field name="pad"            id="10" type="Pad8"/>
+    <field name="pad2"           id="11" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="Nbbo" id="202" blockLength="64">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="bidVenue"       id="2" type="VenueId"/>
+    <field name="askVenue"       id="3" type="VenueId"/>
+    <field name="bid"            id="4" type="Price"/>
+    <field name="ask"            id="5" type="Price"/>
+    <field name="bidQty"         id="6" type="Qty"/>
+    <field name="askQty"         id="7" type="Qty"/>
+    <field name="sipBid"         id="8" type="Price" description="official SIP NBBO for best-ex"/>
+    <field name="sipAsk"         id="9" type="Price"/>
+    <field name="pad"            id="10" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="Imbalance" id="203" blockLength="48">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="venueId"        id="2" type="VenueId"/>
+    <field name="imbalanceSide"  id="3" type="BookSide"/>
+    <field name="auctionType"    id="4" type="uint8"/>
+    <field name="pairedQty"      id="5" type="Qty"/>
+    <field name="imbalanceQty"   id="6" type="Qty"/>
+    <field name="refPrice"       id="7" type="Price"/>
+    <field name="venueTs"        id="8" type="Ts"/>
+    <field name="pad"            id="9" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="VenueStatus" id="204" blockLength="16">
+    <field name="venueId"        id="1" type="VenueId"/>
+    <field name="status"         id="2" type="TradingStatus"/>
+    <field name="pad"            id="3" type="uint8" length="5"/>
+    <field name="venueTs"        id="4" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="SymbolStatus" id="206" blockLength="32">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="venueId"        id="2" type="VenueId"/>
+    <field name="status"         id="3" type="TradingStatus"/>
+    <field name="reason"         id="4" type="uint8"/>
+    <field name="venueTs"        id="5" type="Ts"/>
+    <field name="resumeTs"       id="6" type="Ts"/>
+    <field name="pad"            id="7" type="Pad8"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Reference data (300-399)
+       ===================================================================== -->
+  <sbe:message name="SymbolAdd" id="300" blockLength="256">
+    <field name="record"         id="1" type="SymbolRecord"/>
+  </sbe:message>
+
+  <sbe:message name="SymbolUpdate" id="301" blockLength="64">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="mask"           id="2" type="SymbolUpdateMask"/>
+    <field name="status"         id="3" type="SymbolStatusCode"/>
+    <field name="marginClass"    id="4" type="uint8"/>
+    <field name="tickTableId"    id="5" type="uint16"/>
+    <field name="lotSize"        id="6" type="uint32"/>
+    <field name="flags"          id="7" type="SymbolFlags"/>
+    <field name="pad"            id="8" type="Pad4"/>
+    <field name="refPrice"       id="9" type="Price"/>
+    <field name="adv30"          id="10" type="int64"/>
+    <field name="sharesOutstanding" id="11" type="int64"/>
+    <field name="pad2"           id="12" type="Pad8"/>
+    <field name="pad3"           id="13" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="ShortSaleRestriction" id="302" blockLength="16">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="active"         id="2" type="uint8"/>
+    <field name="pad"            id="3" type="uint8" length="3"/>
+    <field name="effectiveUntil" id="4" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="ListUpdate" id="303" blockLength="16">
+    <field name="listId"         id="1" type="ListId"/>
+    <field name="op"             id="2" type="ListOp"/>
+    <field name="pad"            id="3" type="uint8" length="2"/>
+    <field name="symbolIdx"      id="4" type="SymIdx"/>
+    <field name="expiryTs"       id="5" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="TickTableUpdate" id="304" blockLength="272">
+    <field name="record"         id="1" type="TickTableRecord"/>
+  </sbe:message>
+
+  <sbe:message name="FeeScheduleUpdate" id="305" blockLength="144">
+    <field name="record"         id="1" type="FeeRecord"/>
+    <field name="effectiveTs"    id="2" type="Ts"/>
+    <field name="pad"            id="3" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="CorporateAction" id="306" blockLength="128">
+    <field name="record"         id="1" type="CorporateActionRecord"/>
+  </sbe:message>
+
+  <sbe:message name="CalendarUpdate" id="307" blockLength="32">
+    <field name="record"         id="1" type="CalendarRecord"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Risk and limits (400-499)
+       ===================================================================== -->
+  <sbe:message name="LimitUpdate" id="400" blockLength="80">
+    <field name="accountIdx"     id="1" type="AcctIdx" description="0 = firm"/>
+    <field name="symbolIdx"      id="2" type="SymIdx" description="0 = all symbols"/>
+    <field name="maxOrderQty"    id="3" type="Qty"/>
+    <field name="maxOrderNotional" id="4" type="Money"/>
+    <field name="maxGrossExposure" id="5" type="Money"/>
+    <field name="maxNetExposure" id="6" type="Money"/>
+    <field name="priceCollarBps" id="7" type="uint32"/>
+    <field name="maxMsgRate"     id="8" type="uint32"/>
+    <field name="maxOpenOrders"  id="9" type="uint32"/>
+    <field name="operatorId"     id="10" type="uint32"/>
+    <field name="pad"            id="11" type="uint8" length="24"/>
+  </sbe:message>
+
+  <sbe:message name="BuyingPowerUpdate" id="401" blockLength="32">
+    <field name="accountIdx"     id="1" type="AcctIdx"/>
+    <field name="pad"            id="2" type="Pad4"/>
+    <field name="buyingPower"    id="3" type="Money"/>
+    <field name="maintenanceExcess" id="4" type="Money"/>
+    <field name="asOfSeq"        id="5" type="Seq"/>
+  </sbe:message>
+
+  <sbe:message name="ExposureSnapshot" id="402" blockLength="48">
+    <field name="accountIdx"     id="1" type="AcctIdx"/>
+    <field name="pad"            id="2" type="Pad4"/>
+    <field name="grossExposure"  id="3" type="Money"/>
+    <field name="netExposure"    id="4" type="Money"/>
+    <field name="openOrderNotional" id="5" type="Money"/>
+    <field name="openOrders"     id="6" type="uint32"/>
+    <field name="pad2"           id="7" type="Pad4"/>
+    <field name="pad3"           id="8" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="MarginCall" id="403" blockLength="48">
+    <field name="accountIdx"     id="1" type="AcctIdx"/>
+    <field name="callType"       id="2" type="uint8"/>
+    <field name="pad"            id="3" type="uint8" length="3"/>
+    <field name="amount"         id="4" type="Money"/>
+    <field name="deadlineTs"     id="5" type="Ts"/>
+    <field name="callId"         id="6" type="Id64"/>
+    <field name="pad2"           id="7" type="Pad8"/>
+    <field name="pad3"           id="8" type="Pad8"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Market making (500-599)
+       ===================================================================== -->
+  <sbe:message name="QuoteIntent" id="500" blockLength="80">
+    <field name="quoteId"        id="1" type="Id64"/>
+    <field name="symbolIdx"      id="2" type="SymIdx"/>
+    <field name="venueId"        id="3" type="VenueId"/>
+    <field name="strategyId"     id="4" type="uint16"/>
+    <field name="bidPx"          id="5" type="Price"/>
+    <field name="bidQty"         id="6" type="Qty"/>
+    <field name="askPx"          id="7" type="Price"/>
+    <field name="askQty"         id="8" type="Qty"/>
+    <field name="fairValue"      id="9" type="Price"/>
+    <field name="inventory"      id="10" type="Qty"/>
+    <field name="pad"            id="11" type="Pad8"/>
+    <field name="pad2"           id="12" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="QuoteAck" id="501" blockLength="48">
+    <field name="quoteId"        id="1" type="Id64"/>
+    <field name="venueId"        id="2" type="VenueId"/>
+    <field name="accepted"       id="3" type="uint8"/>
+    <field name="pad"            id="4" type="uint8" length="5"/>
+    <field name="venueQuoteId"   id="5" type="VenueExecId"/>
+    <field name="pad2"           id="6" type="Pad4"/>
+    <field name="venueTs"        id="7" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="QuotePull" id="502" blockLength="16">
+    <field name="symbolIdx"      id="1" type="SymIdx" description="0 = all"/>
+    <field name="venueId"        id="2" type="VenueId" description="0 = all"/>
+    <field name="strategyId"     id="3" type="uint16"/>
+    <field name="reason"         id="4" type="uint16"/>
+    <field name="pad"            id="5" type="uint8" length="6"/>
+  </sbe:message>
+
+  <sbe:message name="ModelParams" id="503" blockLength="160">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="modelId"        id="2" type="uint16"/>
+    <field name="modelVersion"   id="3" type="uint16"/>
+    <field name="fitTs"          id="4" type="Ts"/>
+    <field name="params"         id="5" type="int64" length="16" description="1e-9 fixed point"/>
+    <field name="paramCount"     id="6" type="uint8"/>
+    <field name="pad"            id="7" type="uint8" length="15"/>
+  </sbe:message>
+
+  <sbe:message name="InventoryLimit" id="504" blockLength="48">
+    <field name="symbolIdx"      id="1" type="SymIdx" description="0 = firm-wide"/>
+    <field name="strategyId"     id="2" type="uint16"/>
+    <field name="sector"         id="3" type="uint16"/>
+    <field name="maxLong"        id="4" type="Qty"/>
+    <field name="maxShort"       id="5" type="Qty"/>
+    <field name="maxNotional"    id="6" type="Money"/>
+    <field name="operatorId"     id="7" type="uint32"/>
+    <field name="pad"            id="8" type="Pad4"/>
+    <field name="pad2"           id="9" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="ToxicityScore" id="505" blockLength="32">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="counterpartyId" id="2" type="uint32" description="0 = symbol-level"/>
+    <field name="score"          id="3" type="int64" description="1e-9 fixed, 0..1"/>
+    <field name="horizonNs"      id="4" type="int64"/>
+    <field name="pad"            id="5" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="InternalizeDecision" id="506" blockLength="64">
+    <field name="clientOrderId"  id="1" type="Id64"/>
+    <field name="internalized"   id="2" type="uint8"/>
+    <field name="pad"            id="3" type="uint8" length="7"/>
+    <field name="fillPx"         id="4" type="Price"/>
+    <field name="nbboRef"        id="5" type="Price" description="NBBO side used for improvement"/>
+    <field name="improvement"    id="6" type="Money"/>
+    <field name="qty"            id="7" type="Qty"/>
+    <field name="reason"         id="8" type="uint16"/>
+    <field name="pad2"           id="9" type="uint8" length="14"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Positions (600-699)
+       ===================================================================== -->
+  <sbe:message name="PositionSnapshot" id="600" blockLength="80">
+    <field name="accountIdx"     id="1" type="AcctIdx"/>
+    <field name="symbolIdx"      id="2" type="SymIdx"/>
+    <field name="qty"            id="3" type="Qty" description="signed"/>
+    <field name="avgCost"        id="4" type="Price"/>
+    <field name="realizedPnl"    id="5" type="Money"/>
+    <field name="unrealizedPnl"  id="6" type="Money"/>
+    <field name="markPx"         id="7" type="Price"/>
+    <field name="borrowedQty"    id="8" type="Qty"/>
+    <field name="asOfSeq"        id="9" type="Seq"/>
+    <field name="pad"            id="10" type="Pad8"/>
+    <field name="pad2"           id="11" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="LotUpdate" id="601" blockLength="64">
+    <field name="lotId"          id="1" type="Id64"/>
+    <field name="accountIdx"     id="2" type="AcctIdx"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="qty"            id="4" type="Qty"/>
+    <field name="costPx"         id="5" type="Price"/>
+    <field name="openTs"         id="6" type="Ts"/>
+    <field name="closedQty"      id="7" type="Qty"/>
+    <field name="execId"         id="8" type="Id64"/>
+    <field name="pad"            id="9" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="PnlSnapshot" id="602" blockLength="48">
+    <field name="accountIdx"     id="1" type="AcctIdx"/>
+    <field name="currency"       id="2" type="Ccy"/>
+    <field name="pad"            id="3" type="uint8" length="2"/>
+    <field name="realized"       id="4" type="Money"/>
+    <field name="unrealized"     id="5" type="Money"/>
+    <field name="fees"           id="6" type="Money"/>
+    <field name="asOfSeq"        id="7" type="Seq"/>
+    <field name="pad2"           id="8" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="CorporateActionApplied" id="603" blockLength="48">
+    <field name="actionId"       id="1" type="uint64"/>
+    <field name="accountIdx"     id="2" type="AcctIdx"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="qtyBefore"      id="4" type="Qty"/>
+    <field name="qtyAfter"       id="5" type="Qty"/>
+    <field name="cashAmount"     id="6" type="Money"/>
+    <field name="pad"            id="7" type="Pad8"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Stock loan (700-799)
+       ===================================================================== -->
+  <sbe:message name="LocateRequest" id="700" blockLength="32">
+    <field name="locateId"       id="1" type="Id64"/>
+    <field name="accountIdx"     id="2" type="AcctIdx"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="qty"            id="4" type="Qty"/>
+    <field name="sessionId"      id="5" type="uint32"/>
+    <field name="pad"            id="6" type="Pad4"/>
+  </sbe:message>
+
+  <sbe:message name="LocateGranted" id="701" blockLength="64">
+    <field name="locateId"       id="1" type="Id64"/>
+    <field name="accountIdx"     id="2" type="AcctIdx"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="qty"            id="4" type="Qty"/>
+    <field name="sourceId"       id="5" type="uint32" description="lender source, never 0"/>
+    <field name="result"         id="6" type="LocateResult"/>
+    <field name="pad"            id="7" type="uint8" length="3"/>
+    <field name="rateBps"        id="8" type="int64" description="1e-9 fixed annualised"/>
+    <field name="expiryTs"       id="9" type="Ts"/>
+    <field name="reservationId"  id="10" type="Id64"/>
+    <field name="pad2"           id="11" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="LocateDenied" id="702" blockLength="32">
+    <field name="locateId"       id="1" type="Id64"/>
+    <field name="accountIdx"     id="2" type="AcctIdx"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="reason"         id="4" type="uint16"/>
+    <field name="pad"            id="5" type="uint8" length="6"/>
+    <field name="availableQty"   id="6" type="Qty"/>
+  </sbe:message>
+
+  <sbe:message name="LocateExpired" id="703" blockLength="16">
+    <field name="locateId"       id="1" type="Id64"/>
+    <field name="unusedQty"      id="2" type="Qty"/>
+  </sbe:message>
+
+  <sbe:message name="BorrowBooked" id="704" blockLength="80">
+    <field name="borrowId"       id="1" type="Id64"/>
+    <field name="locateId"       id="2" type="Id64"/>
+    <field name="accountIdx"     id="3" type="AcctIdx"/>
+    <field name="symbolIdx"      id="4" type="SymIdx"/>
+    <field name="qty"            id="5" type="Qty"/>
+    <field name="sourceId"       id="6" type="uint32"/>
+    <field name="pad"            id="7" type="Pad4"/>
+    <field name="rateBps"        id="8" type="int64"/>
+    <field name="collateralAmt"  id="9" type="Money"/>
+    <field name="settleTs"       id="10" type="Ts"/>
+    <field name="termTs"         id="11" type="Ts" description="0 = open"/>
+    <field name="pad2"           id="12" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="BorrowFailed" id="705" blockLength="32">
+    <field name="locateId"       id="1" type="Id64"/>
+    <field name="symbolIdx"      id="2" type="SymIdx"/>
+    <field name="reason"         id="3" type="uint16"/>
+    <field name="pad"            id="4" type="uint8" length="2"/>
+    <field name="qty"            id="5" type="Qty"/>
+    <field name="settleDeadlineTs" id="6" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="Recall" id="706" blockLength="48">
+    <field name="borrowId"       id="1" type="Id64"/>
+    <field name="symbolIdx"      id="2" type="SymIdx"/>
+    <field name="pad"            id="3" type="Pad4"/>
+    <field name="qty"            id="4" type="Qty"/>
+    <field name="deadlineTs"     id="5" type="Ts"/>
+    <field name="recallId"       id="6" type="Id64"/>
+    <field name="pad2"           id="7" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="BuyInNotice" id="707" blockLength="48">
+    <field name="recallId"       id="1" type="Id64"/>
+    <field name="accountIdx"     id="2" type="AcctIdx"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="qty"            id="4" type="Qty"/>
+    <field name="executeByTs"    id="5" type="Ts"/>
+    <field name="pad"            id="6" type="Pad8"/>
+    <field name="pad2"           id="7" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="RateUpdate" id="708" blockLength="48">
+    <field name="symbolIdx"      id="1" type="SymIdx"/>
+    <field name="pad"            id="2" type="Pad4"/>
+    <field name="rateBps"        id="3" type="int64"/>
+    <field name="availableQty"   id="4" type="Qty"/>
+    <field name="utilization"    id="5" type="int64" description="1e-9 fixed 0..1"/>
+    <field name="asOfTs"         id="6" type="Ts"/>
+    <field name="pad2"           id="7" type="Pad8"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Strategy (800-899)
+       ===================================================================== -->
+  <sbe:message name="StrategyParam" id="800" blockLength="32">
+    <field name="strategyId"     id="1" type="uint16"/>
+    <field name="paramId"        id="2" type="uint16"/>
+    <field name="paramType"      id="3" type="ParamType"/>
+    <field name="pad"            id="4" type="uint8" length="3"/>
+    <field name="symbolIdx"      id="5" type="SymIdx" description="0 = strategy-wide"/>
+    <field name="pad2"           id="6" type="Pad4"/>
+    <field name="value"          id="7" type="int64"/>
+    <field name="operatorId"     id="8" type="uint32"/>
+    <field name="pad3"           id="9" type="Pad4"/>
+  </sbe:message>
+
+  <sbe:message name="StrategyState" id="801" blockLength="48">
+    <field name="strategyId"     id="1" type="uint16"/>
+    <field name="state"          id="2" type="ComponentState"/>
+    <field name="pad"            id="3" type="uint8" length="5"/>
+    <field name="stateHash"      id="4" type="Hash256"/>
+    <field name="asOfSeq"        id="5" type="Seq"/>
+  </sbe:message>
+
+  <sbe:message name="Signal" id="802" blockLength="32">
+    <field name="signalId"       id="1" type="uint16"/>
+    <field name="pad"            id="2" type="uint8" length="2"/>
+    <field name="symbolIdx"      id="3" type="SymIdx"/>
+    <field name="value"          id="4" type="int64" description="1e-9 fixed"/>
+    <field name="confidence"     id="5" type="int64" description="1e-9 fixed 0..1"/>
+    <field name="horizonNs"      id="6" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="StrategyIntent" id="803" blockLength="64">
+    <field name="intentId"       id="1" type="Id64"/>
+    <field name="strategyId"     id="2" type="uint16"/>
+    <field name="intentType"     id="3" type="uint8" description="1 order, 2 cancel, 3 quote, 4 flatten"/>
+    <field name="side"           id="4" type="Side"/>
+    <field name="symbolIdx"      id="5" type="SymIdx"/>
+    <field name="qty"            id="6" type="Qty"/>
+    <field name="price"          id="7" type="Price"/>
+    <field name="refOrderId"     id="8" type="Id64"/>
+    <field name="urgency"        id="9" type="uint8"/>
+    <field name="pad"            id="10" type="uint8" length="7"/>
+    <field name="pad2"           id="11" type="Pad8"/>
+    <field name="pad3"           id="12" type="Pad8"/>
+  </sbe:message>
+
+  <sbe:message name="StrategyStart" id="804" blockLength="48">
+    <field name="strategyId"     id="1" type="uint16"/>
+    <field name="instanceId"     id="2" type="uint16"/>
+    <field name="pad"            id="3" type="Pad4"/>
+    <field name="binaryHash"     id="4" type="Hash256"/>
+    <field name="operatorId"     id="5" type="uint32"/>
+    <field name="pad2"           id="6" type="Pad4"/>
+  </sbe:message>
+
+  <sbe:message name="StrategyStop" id="805" blockLength="16">
+    <field name="strategyId"     id="1" type="uint16"/>
+    <field name="instanceId"     id="2" type="uint16"/>
+    <field name="reason"         id="3" type="uint16"/>
+    <field name="flatten"        id="4" type="uint8"/>
+    <field name="pad"            id="5" type="uint8"/>
+    <field name="operatorId"     id="6" type="uint32"/>
+    <field name="pad2"           id="7" type="Pad4"/>
+  </sbe:message>
+
+  <!-- =====================================================================
+       Telemetry (900-999)  (separate stream, never the core log)
+       ===================================================================== -->
+  <sbe:message name="LatencySample" id="900" blockLength="160">
+    <field name="stageId"        id="1" type="uint16"/>
+    <field name="pad"            id="2" type="uint8" length="6"/>
+    <field name="windowStartTs"  id="3" type="Ts"/>
+    <field name="count"          id="4" type="uint64"/>
+    <field name="buckets"        id="5" type="uint32" length="32" description="log2 ns buckets"/>
+    <field name="maxNs"          id="6" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="QueueDepth" id="901" blockLength="32">
+    <field name="queueId"        id="1" type="uint16"/>
+    <field name="pad"            id="2" type="uint8" length="6"/>
+    <field name="depth"          id="3" type="uint64"/>
+    <field name="maxDepth"       id="4" type="uint64"/>
+    <field name="sampleTs"       id="5" type="Ts"/>
+  </sbe:message>
+
+  <sbe:message name="Alert" id="902" blockLength="80">
+    <field name="severity"       id="1" type="Severity"/>
+    <field name="pad"            id="2" type="uint8"/>
+    <field name="alertCode"      id="3" type="uint16"/>
+    <field name="symbolIdx"      id="4" type="SymIdx"/>
+    <field name="accountIdx"     id="5" type="AcctIdx"/>
+    <field name="pad2"           id="6" type="Pad4"/>
+    <field name="detail"         id="7" type="Name64"/>
+  </sbe:message>
+</sbe:messageSchema>

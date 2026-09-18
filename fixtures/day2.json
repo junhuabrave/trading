@@ -1,0 +1,810 @@
+{
+ "instruments": [
+  {
+   "symbolIdx": 1,
+   "ticker": "AAPL",
+   "name": "Apple Inc",
+   "listingVenue": 2,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 22952493272,
+   "prevClose": 22952493272,
+   "adv30": 68517629,
+   "sharesOutstanding": 15166000000,
+   "issuerId": 1001,
+   "sector": 11,
+   "cusip": "037833100",
+   "isin": "US0378331005",
+   "figi": "BBG000B9XRY4",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 2,
+   "ticker": "MSFT",
+   "name": "Microsoft Corp",
+   "listingVenue": 2,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 40571513767,
+   "prevClose": 40571513767,
+   "adv30": 24120867,
+   "sharesOutstanding": 16274000000,
+   "issuerId": 1002,
+   "sector": 12,
+   "cusip": "594918104",
+   "isin": "US5949181045",
+   "figi": "BBG000BPH459",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 3,
+   "ticker": "JPM",
+   "name": "JPMorgan Chase",
+   "listingVenue": 1,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 20780386283,
+   "prevClose": 20780386283,
+   "adv30": 42759303,
+   "sharesOutstanding": 6880000000,
+   "issuerId": 1003,
+   "sector": 13,
+   "cusip": "46625H100",
+   "isin": "US46625H1005",
+   "figi": "BBG000DMBXR2",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 4,
+   "ticker": "GS",
+   "name": "Goldman Sachs",
+   "listingVenue": 1,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 47564625399,
+   "prevClose": 47564625399,
+   "adv30": 35996496,
+   "sharesOutstanding": 4572000000,
+   "issuerId": 1004,
+   "sector": 10,
+   "cusip": "38141G104",
+   "isin": "US38141G1040",
+   "figi": "BBG000C6CFJ5",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 5,
+   "ticker": "MS",
+   "name": "Morgan Stanley",
+   "listingVenue": 1,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 10210171977,
+   "prevClose": 10210171977,
+   "adv30": 43509904,
+   "sharesOutstanding": 15482000000,
+   "issuerId": 1005,
+   "sector": 11,
+   "cusip": "617446448",
+   "isin": "US6174464486",
+   "figi": "BBG000BLZRJ2",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 6,
+   "ticker": "SPY",
+   "name": "SPDR S&P 500 ETF",
+   "listingVenue": 1,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 54188946800,
+   "prevClose": 54188946800,
+   "adv30": 21342953,
+   "sharesOutstanding": 5465000000,
+   "issuerId": 1006,
+   "sector": 12,
+   "cusip": "78462F103",
+   "isin": "US78462F1030",
+   "figi": "BBG000BDTBL9",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "Etf",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 7,
+   "ticker": "GME",
+   "name": "GameStop Corp",
+   "listingVenue": 1,
+   "tickTableId": 2,
+   "lotSize": 100,
+   "refPrice": 2266187989,
+   "prevClose": 2266187989,
+   "adv30": 46651022,
+   "sharesOutstanding": 4237000000,
+   "issuerId": 1007,
+   "sector": 13,
+   "cusip": "36467W109",
+   "isin": "US36467W1099",
+   "figi": "BBG000BB5BF6",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 8,
+   "ticker": "TSLA",
+   "name": "Tesla Inc",
+   "listingVenue": 2,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 26712511302,
+   "prevClose": 26712511302,
+   "adv30": 46754540,
+   "sharesOutstanding": 7048000000,
+   "issuerId": 1008,
+   "sector": 10,
+   "cusip": "88160R101",
+   "isin": "US88160R1014",
+   "figi": "BBG000N9MNX3",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable"
+   ]
+  },
+  {
+   "symbolIdx": 9,
+   "ticker": "XYZQ",
+   "name": "Xyzq Holdings (to be delisted)",
+   "listingVenue": 2,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 45315766,
+   "prevClose": 45315766,
+   "adv30": 10881722,
+   "sharesOutstanding": 17819000000,
+   "issuerId": 1009,
+   "sector": 11,
+   "cusip": "999999999",
+   "isin": "US9999999991",
+   "figi": "BBG00000ZZZ1",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [],
+   "status": "Delisted"
+  },
+  {
+   "symbolIdx": 10,
+   "ticker": "NVDA",
+   "name": "NVIDIA Corp",
+   "listingVenue": 2,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 3002500000,
+   "prevClose": 12010000000,
+   "adv30": 34342642,
+   "sharesOutstanding": 22680000000,
+   "issuerId": 1010,
+   "sector": 12,
+   "cusip": "67066G104",
+   "isin": "US67066G1040",
+   "figi": "BBG000BBJQV0",
+   "marginClass": 1,
+   "validFrom": 1600000000000000000,
+   "instrumentType": "CommonStock",
+   "flags": [
+    "marginable",
+    "shortable",
+    "corpActionToday"
+   ],
+   "lastCorpActionId": 5001
+  },
+  {
+   "symbolIdx": 11,
+   "ticker": "NEWCO",
+   "name": "Newco Robotics (IPO)",
+   "listingVenue": 2,
+   "tickTableId": 1,
+   "lotSize": 100,
+   "refPrice": 2400000000,
+   "prevClose": 2400000000,
+   "adv30": 0,
+   "sharesOutstanding": 50000000,
+   "issuerId": 1011,
+   "sector": 12,
+   "cusip": "123456789",
+   "isin": "US1234567890",
+   "figi": "BBG00NEWCO001",
+   "marginClass": 3,
+   "validFrom": 1757894400000000000,
+   "flags": [
+    "marginable"
+   ]
+  }
+ ],
+ "listings": [
+  {
+   "symbolIdx": 1,
+   "venueId": 1,
+   "venueSymbol": "AAPL",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 1,
+   "venueId": 2,
+   "venueSymbol": "AAPL",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 1,
+   "venueId": 3,
+   "venueSymbol": "AAPL",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 1,
+   "venueId": 4,
+   "venueSymbol": "AAPL",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 2,
+   "venueId": 1,
+   "venueSymbol": "MSFT",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 2,
+   "venueId": 2,
+   "venueSymbol": "MSFT",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 2,
+   "venueId": 3,
+   "venueSymbol": "MSFT",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 2,
+   "venueId": 4,
+   "venueSymbol": "MSFT",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 3,
+   "venueId": 1,
+   "venueSymbol": "JPM",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 3,
+   "venueId": 2,
+   "venueSymbol": "JPM",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 3,
+   "venueId": 3,
+   "venueSymbol": "JPM",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 3,
+   "venueId": 4,
+   "venueSymbol": "JPM",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 4,
+   "venueId": 1,
+   "venueSymbol": "GS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 4,
+   "venueId": 2,
+   "venueSymbol": "GS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 4,
+   "venueId": 3,
+   "venueSymbol": "GS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 4,
+   "venueId": 4,
+   "venueSymbol": "GS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 5,
+   "venueId": 1,
+   "venueSymbol": "MS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 5,
+   "venueId": 2,
+   "venueSymbol": "MS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 5,
+   "venueId": 3,
+   "venueSymbol": "MS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 5,
+   "venueId": 4,
+   "venueSymbol": "MS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 6,
+   "venueId": 1,
+   "venueSymbol": "SPY",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 6,
+   "venueId": 2,
+   "venueSymbol": "SPY",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 6,
+   "venueId": 3,
+   "venueSymbol": "SPY",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 6,
+   "venueId": 4,
+   "venueSymbol": "SPY",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 7,
+   "venueId": 1,
+   "venueSymbol": "GME",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 7,
+   "venueId": 2,
+   "venueSymbol": "GME",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 7,
+   "venueId": 3,
+   "venueSymbol": "GME",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 7,
+   "venueId": 4,
+   "venueSymbol": "GME",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 8,
+   "venueId": 1,
+   "venueSymbol": "TSLA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 8,
+   "venueId": 2,
+   "venueSymbol": "TSLA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 8,
+   "venueId": 3,
+   "venueSymbol": "TSLA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 8,
+   "venueId": 4,
+   "venueSymbol": "TSLA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 9,
+   "venueId": 1,
+   "venueSymbol": "XYZQ",
+   "tradable": false
+  },
+  {
+   "symbolIdx": 9,
+   "venueId": 2,
+   "venueSymbol": "XYZQ",
+   "tradable": false
+  },
+  {
+   "symbolIdx": 9,
+   "venueId": 3,
+   "venueSymbol": "XYZQ",
+   "tradable": false
+  },
+  {
+   "symbolIdx": 9,
+   "venueId": 4,
+   "venueSymbol": "XYZQ",
+   "tradable": false
+  },
+  {
+   "symbolIdx": 10,
+   "venueId": 1,
+   "venueSymbol": "NVDA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 10,
+   "venueId": 2,
+   "venueSymbol": "NVDA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 10,
+   "venueId": 3,
+   "venueSymbol": "NVDA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 10,
+   "venueId": 4,
+   "venueSymbol": "NVDA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 11,
+   "venueId": 1,
+   "venueSymbol": "NEWCO",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 11,
+   "venueId": 2,
+   "venueSymbol": "NEWCO",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 11,
+   "venueId": 3,
+   "venueSymbol": "NEWCO",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 11,
+   "venueId": 4,
+   "venueSymbol": "NEWCO",
+   "tradable": true
+  }
+ ],
+ "venues": [
+  {
+   "venueId": 1,
+   "mic": "XNYS",
+   "name": "NYSE",
+   "venueType": "Exchange",
+   "protocol": 2,
+   "sessionIds": [
+    101,
+    102
+   ],
+   "oneWayLatencyNs": 38000
+  },
+  {
+   "venueId": 2,
+   "mic": "XNAS",
+   "name": "Nasdaq",
+   "venueType": "Exchange",
+   "protocol": 1,
+   "sessionIds": [
+    201,
+    202,
+    203
+   ],
+   "oneWayLatencyNs": 12000
+  },
+  {
+   "venueId": 3,
+   "mic": "BATS",
+   "name": "Cboe BZX",
+   "venueType": "Exchange",
+   "protocol": 3,
+   "sessionIds": [
+    301
+   ],
+   "oneWayLatencyNs": 21000
+  },
+  {
+   "venueId": 4,
+   "mic": "IEXG",
+   "name": "IEX",
+   "venueType": "Exchange",
+   "protocol": 9,
+   "sessionIds": [
+    401
+   ],
+   "oneWayLatencyNs": 25000
+  },
+  {
+   "venueId": 9,
+   "mic": "INTL",
+   "name": "Internal",
+   "venueType": "Internal",
+   "protocol": 0,
+   "sessionIds": [],
+   "oneWayLatencyNs": 0
+  }
+ ],
+ "tickTables": [
+  {
+   "tickTableId": 1,
+   "bands": [
+    [
+     0,
+     10000
+    ],
+    [
+     100000000,
+     1000000
+    ]
+   ]
+  },
+  {
+   "tickTableId": 2,
+   "bands": [
+    [
+     0,
+     10000
+    ],
+    [
+     100000000,
+     500000
+    ]
+   ]
+  }
+ ],
+ "calendars": [
+  {
+   "venueId": 1,
+   "date": 20260916,
+   "openTs": 1757950200000000000,
+   "closeTs": 1757973600000000000,
+   "auctionTs": 1757973600000000000
+  },
+  {
+   "venueId": 2,
+   "date": 20260916,
+   "openTs": 1757950200000000000,
+   "closeTs": 1757973600000000000,
+   "auctionTs": 1757973600000000000
+  },
+  {
+   "venueId": 3,
+   "date": 20260916,
+   "openTs": 1757950200000000000,
+   "closeTs": 1757973600000000000,
+   "auctionTs": 1757973600000000000
+  },
+  {
+   "venueId": 4,
+   "date": 20260916,
+   "openTs": 1757950200000000000,
+   "closeTs": 1757973600000000000,
+   "auctionTs": 1757973600000000000
+  }
+ ],
+ "corporateActions": [
+  {
+   "actionId": 5001,
+   "symbolIdx": 10,
+   "actionType": "Split",
+   "exDate": 20260916,
+   "recordDate": 20260912,
+   "payDate": 20260915,
+   "ratioNum": 4,
+   "ratioDen": 1,
+   "applied": true
+  },
+  {
+   "actionId": 5002,
+   "symbolIdx": 9,
+   "actionType": "Delist",
+   "exDate": 20260916,
+   "applied": true
+  }
+ ],
+ "lists": {
+  "etb": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   8,
+   10,
+   11
+  ],
+  "htb": [
+   7
+  ],
+  "restricted": [
+   5
+  ],
+  "threshold": [
+   7
+  ],
+  "watch": [
+   11
+  ]
+ },
+ "fees": [
+  {
+   "venueId": 1,
+   "feeCode": 1,
+   "liquidity": "Removed",
+   "feePerShare": 300000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 1,
+   "feeCode": 2,
+   "liquidity": "Added",
+   "feePerShare": -250000,
+   "effectiveDate": 20260916
+  },
+  {
+   "venueId": 2,
+   "feeCode": 1,
+   "liquidity": "Removed",
+   "feePerShare": 300000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 2,
+   "feeCode": 2,
+   "liquidity": "Added",
+   "feePerShare": -200000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 3,
+   "feeCode": 1,
+   "liquidity": "Removed",
+   "feePerShare": 300000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 3,
+   "feeCode": 2,
+   "liquidity": "Added",
+   "feePerShare": -200000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 4,
+   "feeCode": 1,
+   "liquidity": "Removed",
+   "feePerShare": 300000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 4,
+   "feeCode": 2,
+   "liquidity": "Added",
+   "feePerShare": -200000,
+   "effectiveDate": 20260901
+  }
+ ],
+ "accounts": [
+  {
+   "accountIdx": 1,
+   "accountType": "Firm",
+   "routingProfile": 1,
+   "externalRef": "FIRM-MM"
+  },
+  {
+   "accountIdx": 42,
+   "accountType": "Margin",
+   "routingProfile": 3,
+   "limitSetId": 7,
+   "externalRef": "CL-000042"
+  }
+ ],
+ "components": [
+  {
+   "sourceId": 1,
+   "role": "Sequencer",
+   "name": "seq-a"
+  },
+  {
+   "sourceId": 2,
+   "role": "Gateway",
+   "name": "gw-fix-1"
+  },
+  {
+   "sourceId": 3,
+   "role": "Risk",
+   "name": "risk-1"
+  },
+  {
+   "sourceId": 7,
+   "role": "VenueGateway",
+   "name": "vgw-xnas"
+  },
+  {
+   "sourceId": 8,
+   "role": "FeedHandler",
+   "name": "fh-itch-1"
+  },
+  {
+   "sourceId": 15,
+   "role": "SecMaster",
+   "name": "secmaster"
+  }
+ ],
+ "sources": [
+  {
+   "sourceId": 1,
+   "sourceTs": 1757900000000000000,
+   "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "sourceId": 2,
+   "sourceTs": 1757900100000000000,
+   "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+ ]
+}

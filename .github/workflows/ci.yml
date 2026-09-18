@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y g++-13 make python3-pip
+          pip install --break-system-packages blake3
+      - name: schema compatibility
+        run: make check
+      - name: build and test
+        run: make test CXX=g++-13
+      - name: bench (informational)
+        run: make bench CXX=g++-13

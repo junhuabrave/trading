@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message schema, security master and snapshot format</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF1F4; --panel:#FFFFFF; --ink:#1B2430; --muted:#5C6773; --rule:#C9D0D8;
+  --hot:#C8781C; --hot-soft:#F6E4CC; --cold:#2E7D7A; --cold-soft:#D4E9E7;
+  --warn:#9A3B2B; --warn-soft:#F3DDD8;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+    --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+    --warn:#E07A66; --warn-soft:#3B1F1A;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+  --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+  --warn:#E07A66; --warn-soft:#3B1F1A;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:17px;line-height:1.6}
+h1,h2,h3,h4{font-family:"Bitter","Georgia",serif;line-height:1.2;margin:0}
+h1{font-size:2.4rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.65rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:2px solid var(--ink)}
+h3{font-size:1.2rem;font-weight:600;margin-top:2rem}
+h4{font-size:1rem;font-weight:600;margin-top:1.2rem}
+p{margin:.8rem 0;max-width:70ch}
+ul,ol{max-width:70ch;padding-left:1.3rem}
+li{margin:.3rem 0}
+a{color:var(--cold)}
+a:focus-visible{outline:3px solid var(--hot);outline-offset:2px}
+code{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.92em;background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:0 .3em}
+pre{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.9rem 1rem;overflow-x:auto;font-size:.85rem;line-height:1.5;max-width:100%}
+pre code{border:0;padding:0;background:none}
+.wrap{display:grid;grid-template-columns:230px minmax(0,1fr);gap:3rem;max-width:1180px;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+nav.toc{position:sticky;top:1.5rem;align-self:start;font-size:.88rem;line-height:1.45}
+nav.toc ol{list-style:none;padding:0;margin:0}
+nav.toc li{margin:.25rem 0}
+nav.toc a{color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+nav.toc .grp{margin-top:1rem;color:var(--ink);font-weight:600}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:1.5rem}nav.toc{position:static;border-bottom:1px solid var(--rule);padding-bottom:1rem}nav.toc ol{columns:2}}
+header.hero{margin-bottom:2rem}
+header.hero .sub{font-size:1.15rem;color:var(--muted);max-width:62ch;margin-top:.8rem}
+.note{border-left:4px solid var(--hot);background:var(--panel);padding:.9rem 1.1rem;margin:1.4rem 0;max-width:72ch;border-radius:0 4px 4px 0}
+.note.risk{border-left-color:var(--warn)}
+.note p{margin:.4rem 0}
+.diagram{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.6rem;margin:1.2rem 0;overflow-x:auto}
+.diagram svg{width:100%;min-width:720px;height:auto;display:block;font-family:"IBM Plex Sans",sans-serif}
+.spec{display:grid;grid-template-columns:150px minmax(0,1fr);gap:.5rem 1.2rem;margin:1rem 0;max-width:78ch}
+.spec dt{color:var(--muted);font-size:.9rem;font-weight:500;padding-top:.15rem}
+.spec dd{margin:0}
+.spec dd ul{margin:0;padding-left:1.1rem}
+@media (max-width:600px){.spec{grid-template-columns:1fr}.spec dt{margin-top:.6rem}}
+.tablewrap{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;font-size:.9rem;min-width:560px}
+th,td{text-align:left;padding:.45rem .65rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:600;border-bottom:2px solid var(--ink)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td code{white-space:nowrap}
+tr.total td{font-weight:600;border-top:2px solid var(--ink)}
+.cap{font-size:.85rem;color:var(--muted);margin:-.4rem 0 1rem}
+footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:var(--muted);font-size:.88rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+<ol>
+<li><a href="#bar">The bar we are aiming at</a></li>
+<li><a href="#idl">One schema, four languages</a></li>
+<li><a href="#types">Primitive conventions</a></li>
+<li><a href="#header">Frame header and causality</a></li>
+<li><a href="#families">Message families</a></li>
+<li><a href="#neworder">NewOrder</a></li>
+<li><a href="#execreport">ExecReport</a></li>
+<li><a href="#bookdelta">BookDelta</a></li>
+<li><a href="#refmsgs">Reference update messages</a></li>
+<li><a href="#versioning">Versioning rules</a></li>
+<li><a href="#logs">Log topology and scale</a></li>
+<li class="grp">Security master</li>
+<li><a href="#model">Data model</a></li>
+<li><a href="#pipeline">Nightly pipeline</a></li>
+<li><a href="#snapshot">Snapshot binary layout</a></li>
+<li><a href="#symbolrec">SymbolRecord</a></li>
+<li><a href="#loading">How engines load it</a></li>
+<li class="grp">Platform</li>
+<li><a href="#strategy">Strategy framework</a></li>
+<li><a href="#observe">Observability in the schema</a></li>
+<li><a href="#resilience">Resilience</a></li>
+<li><a href="#oss">Open-source choices</a></li>
+<li><a href="#repo">Repository layout</a></li>
+<li><a href="#next">First code</a></li>
+</ol>
+</nav>
+
+<main>
+<header class="hero">
+<h1>Message schema, security master and snapshot format</h1>
+<p class="sub">The contract every component of the trading stack speaks. One schema file generates the C++ hot path, the Go services, the Python research code and the TypeScript client; the security master and its daily snapshot are defined in the same file.</p>
+</header>
+
+<h2 id="bar">The bar we are aiming at</h2>
+<p>The large banks did not design their trading stacks; they accumulated them. Inside Morgan Stanley, JPMorgan or Goldman there are dozens of order formats, several position systems that disagree with each other at 4pm, and reference data that arrives by six different routes. Their edge is capital, client relationships and decades of venue certification, not schema discipline. That is the opening. A stack where every message, every reference record and every strategy parameter is one generated type, sequenced on one log, is something they would build if they could start again, and cannot.</p>
+<p>The schema is therefore where speed, resilience, observability and strategy flexibility are all decided at once:</p>
+<ul>
+<li><strong>Speed:</strong> fixed-layout binary, decoded by pointer cast, no parsing, no allocation, every hot field on the first cache line.</li>
+<li><strong>Resilience:</strong> every message carries its sequence number, its cause and its origin time, so any state can be rebuilt and any decision replayed.</li>
+<li><strong>Observability:</strong> causality and timestamps are in the header, not bolted on; latency and audit are queries over the log.</li>
+<li><strong>Strategy flexibility:</strong> strategies are consumers of the same messages with their own parameter messages; a new strategy never touches the schema of the core.</li>
+<li><strong>Scalability:</strong> partitioned logs with watermarks keep determinism when one sequencer is no longer enough.</li>
+</ul>
+
+<h2 id="idl">One schema, four languages</h2>
+<p>Encoding: <strong>Simple Binary Encoding (SBE)</strong>, the FIX Trading Community standard used by CME, B3 and the Aeron ecosystem. It is open source (Apache 2.0), it produces flyweight codecs that read fields directly from the buffer with no copying, it has first-class schema versioning with append-only extension, and it has maintained generators for C++, Java, Go, Rust and C#. FlatBuffers and Cap'n Proto were the alternatives; SBE wins on decode cost (no vtable or pointer indirection for fixed fields) and on being designed for exactly this use.</p>
+<p>The single source of truth is <code>schema/trading.xml</code>. The build generates:</p>
+<ul>
+<li>C++23 header-only codecs for the hot path (SBE's generator, with our own thin wrapper adding constexpr size checks and struct-of-arrays helpers).</li>
+<li>Go codecs for control-plane and cold-path services.</li>
+<li>Python codecs for research, TCA and the simulator driver, plus a generated Arrow schema so a day's log converts to Parquet with one function.</li>
+<li>TypeScript type definitions and a JSON projection for the web client and for humans reading messages in tooling.</li>
+<li>Documentation: every message and field, with its version history, generated into this document's successor.</li>
+</ul>
+<p>Nobody writes a message struct by hand in any language. A pull request that changes the schema runs the compatibility checker (below) and the full simulator replay before it merges.</p>
+
+<pre><code>&lt;sbe:messageSchema package="trading" id="1" version="3"
+    byteOrder="littleEndian" headerType="FrameHeader"&gt;
+  &lt;types&gt;
+    &lt;type name="Price"  primitiveType="int64"/&gt;   &lt;!-- 1e-8 units --&gt;
+    &lt;type name="Qty"    primitiveType="int64"/&gt;
+    &lt;type name="Ts"     primitiveType="int64"/&gt;   &lt;!-- ns since epoch, UTC --&gt;
+    &lt;type name="Seq"    primitiveType="uint64"/&gt;
+    &lt;type name="SymIdx" primitiveType="uint32"/&gt;
+    &lt;type name="AcctIdx" primitiveType="uint32"/&gt;
+    &lt;enum name="Side" encodingType="uint8"&gt;
+      &lt;validValue name="Buy"&gt;1&lt;/validValue&gt;
+      &lt;validValue name="Sell"&gt;2&lt;/validValue&gt;
+      &lt;validValue name="SellShort"&gt;3&lt;/validValue&gt;
+      &lt;validValue name="SellShortExempt"&gt;4&lt;/validValue&gt;
+    &lt;/enum&gt;
+  &lt;/types&gt;
+  &lt;sbe:message name="NewOrder" id="100"&gt;
+    &lt;field name="clOrdId"    id="1"  type="uint64"/&gt;
+    &lt;field name="accountIdx" id="2"  type="AcctIdx"/&gt;
+    &lt;field name="symbolIdx"  id="3"  type="SymIdx"/&gt;
+    &lt;field name="side"       id="4"  type="Side"/&gt;
+    ...
+    &lt;field name="minQty"     id="12" type="Qty" sinceVersion="2"/&gt;
+  &lt;/sbe:message&gt;
+&lt;/sbe:messageSchema&gt;</code></pre>
+
+<h2 id="types">Primitive conventions</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Concept</th><th>Type</th><th>Convention</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Price</td><td><code>int64</code></td><td>Fixed point, 1e-8 units. $123.45 is 12 345 000 000. Negative allowed (spreads, fees).</td><td>Exact arithmetic, no floating-point drift, fits sub-penny quoting and US equities up to $92 billion per share. FX and rates later reuse the type with a per-instrument scale in reference data.</td></tr>
+<tr><td>Quantity</td><td><code>int64</code></td><td>Whole units of the instrument's minimum tradable increment (shares for equities). Fractional shares are a reference-data scale, not a float.</td><td>Options and fractional retail lots fit without changing the type.</td></tr>
+<tr><td>Time</td><td><code>int64</code></td><td>Nanoseconds since Unix epoch, UTC, always. Local time exists only in the UI.</td><td>Hardware NIC timestamps are nanosecond; one time base across all venues and sites.</td></tr>
+<tr><td>Sequence</td><td><code>uint64</code></td><td>Assigned by the sequencer; 0 means not yet sequenced. Never reused; a log stream's sequence is monotonic across restarts because the sequencer resumes from its journal.</td><td></td></tr>
+<tr><td>Symbol</td><td><code>uint32</code> index</td><td>Assigned once by the security master, never reused for a different instrument. Tickers exist only at the edge.</td><td>Array indexing on the hot path; a ticker rename does not move data.</td></tr>
+<tr><td>Account</td><td><code>uint32</code> index</td><td>Same rule as symbols.</td><td></td></tr>
+<tr><td>Venue</td><td><code>uint16</code></td><td>From the venue table in the snapshot.</td><td></td></tr>
+<tr><td>Identifiers</td><td><code>uint64</code></td><td>Order ids, exec ids, locate ids: 64-bit, generated as (sourceId &lt;&lt; 48 | counter), so any id says who minted it.</td><td>Unique without coordination, and debuggable by eye.</td></tr>
+<tr><td>Enums</td><td><code>uint8</code></td><td>Value 0 is always "unset". Deprecated values are never reused.</td><td></td></tr>
+<tr><td>Strings</td><td>fixed <code>char[N]</code></td><td>Only in reference and cold-path messages; never in an order or market-data message. Null-padded, ASCII.</td><td>Variable-length data breaks fixed layout and cache behaviour.</td></tr>
+<tr><td>Money</td><td><code>int64</code> + <code>uint16</code> currency</td><td>1e-8 units in the stated currency.</td><td></td></tr>
+</tbody>
+</table>
+</div>
+<p>All messages are little-endian, 8-byte aligned, and padded to a multiple of 16 bytes. Fields are ordered so that the ones the hot path reads first sit in the first 64 bytes after the header.</p>
+
+<h2 id="header">Frame header and causality</h2>
+<p>Every message on every log starts with the same 48-byte header. Three fields do most of the work: <code>seq</code> is where the message sits in total order; <code>causeSeq</code> is the sequence number of the message that caused this one; <code>originTs</code> is when the event first touched our hardware. Together they give a complete causal graph of the day.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Offset</th><th>Field</th><th>Type</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td class="num">0</td><td><code>frameLength</code></td><td>uint32</td><td>Total bytes including header. Lets a reader skip messages it does not decode.</td></tr>
+<tr><td class="num">4</td><td><code>templateId</code></td><td>uint16</td><td>Which message. Stable forever once assigned.</td></tr>
+<tr><td class="num">6</td><td><code>schemaVersion</code></td><td>uint16</td><td>Schema version the writer used. Readers decode any version ≤ their own.</td></tr>
+<tr><td class="num">8</td><td><code>seq</code></td><td>uint64</td><td>Sequence number on this stream. 0 before sequencing.</td></tr>
+<tr><td class="num">16</td><td><code>seqTs</code></td><td>int64</td><td>Sequencer's clock when it assigned <code>seq</code>. The canonical "when" of the event.</td></tr>
+<tr><td class="num">24</td><td><code>originTs</code></td><td>int64</td><td>Hardware timestamp of the external packet or the local clock of the component that created the message.</td></tr>
+<tr><td class="num">32</td><td><code>causeSeq</code></td><td>uint64</td><td>Sequence number of the message this one is a response to. 0 for external events.</td></tr>
+<tr><td class="num">40</td><td><code>sourceId</code></td><td>uint16</td><td>Which component instance wrote it (from the component table). Used in id generation.</td></tr>
+<tr><td class="num">42</td><td><code>flags</code></td><td>uint16</td><td>bit0 replayed, bit1 simulated, bit2 last-in-batch, bit3 checkpoint-boundary.</td></tr>
+<tr><td class="num">44</td><td><code>streamId</code></td><td>uint32</td><td>Which log stream (core, or a market-data partition).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Follow <code>causeSeq</code> backwards from a fill and you reach the venue ack, the child order, the router decision, the risk accept, and the client's original order, each with a timestamp. That chain is the latency breakdown for that order, the audit trail for a regulator, and the evidence for a client dispute, and it costs eight bytes per message.</p>
+
+<h2 id="families">Message families</h2>
+<p>Template ids are allocated in blocks of 100 per family so that a reader can route on the hundreds digit. The full list lives in the schema; this is the map.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Block</th><th>Family</th><th>Messages</th><th>Writers</th></tr></thead>
+<tbody>
+<tr><td class="num">1 to 99</td><td>Control</td><td><code>Heartbeat</code>, <code>SessionStart</code> (carries snapshot hash), <code>Checkpoint</code>, <code>KillSwitch</code>, <code>ComponentStatus</code>, <code>ClockSync</code>, <code>MdWatermark</code></td><td>Sequencer, control plane, every component</td></tr>
+<tr><td class="num">100 to 199</td><td>Orders</td><td><code>NewOrder</code>, <code>CancelOrder</code>, <code>ReplaceOrder</code>, <code>RiskDecision</code>, <code>OrderState</code>, <code>ChildOrder</code>, <code>VenueAck</code>, <code>VenueReject</code>, <code>ExecReport</code>, <code>RouteDecision</code></td><td>Gateways, risk, OMS, router, venue gateways</td></tr>
+<tr><td class="num">200 to 299</td><td>Market data</td><td><code>BookDelta</code>, <code>BookSnapshot</code>, <code>Trade</code>, <code>Nbbo</code>, <code>Imbalance</code>, <code>VenueStatus</code>, <code>SymbolStatus</code></td><td>Feed handlers, book builder</td></tr>
+<tr><td class="num">300 to 399</td><td>Reference</td><td><code>SymbolAdd</code>, <code>SymbolUpdate</code>, <code>TickTableUpdate</code>, <code>ShortSaleRestriction</code>, <code>ListUpdate</code> (ETB, restricted, threshold), <code>FeeScheduleUpdate</code>, <code>CorporateAction</code>, <code>CalendarUpdate</code></td><td>Security master, stock loan, compliance, feed handlers</td></tr>
+<tr><td class="num">400 to 499</td><td>Risk and limits</td><td><code>LimitUpdate</code>, <code>BuyingPowerUpdate</code>, <code>ExposureSnapshot</code>, <code>MarginCall</code></td><td>Control plane, margin engine, risk engine</td></tr>
+<tr><td class="num">500 to 599</td><td>Market making</td><td><code>QuoteIntent</code>, <code>QuoteAck</code>, <code>QuotePull</code>, <code>ModelParams</code>, <code>InventoryLimit</code>, <code>ToxicityScore</code>, <code>InternalizeDecision</code></td><td>Market maker, research pipeline, internaliser</td></tr>
+<tr><td class="num">600 to 699</td><td>Positions</td><td><code>PositionSnapshot</code>, <code>LotUpdate</code>, <code>PnlSnapshot</code>, <code>CorporateActionApplied</code></td><td>Position keeper</td></tr>
+<tr><td class="num">700 to 799</td><td>Stock loan</td><td><code>LocateRequest</code>, <code>LocateGranted</code>, <code>LocateDenied</code>, <code>LocateExpired</code>, <code>BorrowBooked</code>, <code>BorrowFailed</code>, <code>Recall</code>, <code>BuyInNotice</code>, <code>RateUpdate</code></td><td>Gateways, stock loan service</td></tr>
+<tr><td class="num">800 to 899</td><td>Strategy</td><td><code>StrategyParam</code>, <code>StrategyState</code>, <code>Signal</code>, <code>StrategyIntent</code>, <code>StrategyStart</code>, <code>StrategyStop</code></td><td>Strategy engine, research, control plane</td></tr>
+<tr><td class="num">900 to 999</td><td>Telemetry</td><td><code>LatencySample</code>, <code>QueueDepth</code>, <code>Alert</code></td><td>All components (separate telemetry stream, not the core log)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="neworder">NewOrder (template 100)</h2>
+<p>The client's order after the gateway has normalised it. The gateway has already resolved ticker to <code>symbolIdx</code> and session to <code>accountIdx</code>; nothing downstream touches a string.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>clOrdId</code></td><td>uint64</td><td>Client's identifier, mapped from FIX tag 11 or supplied directly on the binary API.</td></tr>
+<tr><td><code>orderId</code></td><td>uint64</td><td>Our identifier, minted by the gateway.</td></tr>
+<tr><td><code>accountIdx</code></td><td>uint32</td><td></td></tr>
+<tr><td><code>symbolIdx</code></td><td>uint32</td><td></td></tr>
+<tr><td><code>side</code></td><td>Side</td><td>Buy, Sell, SellShort, SellShortExempt.</td></tr>
+<tr><td><code>ordType</code></td><td>uint8</td><td>Market, Limit, Stop, StopLimit, Pegged (with <code>pegType</code>).</td></tr>
+<tr><td><code>tif</code></td><td>uint8</td><td>Day, IOC, FOK, GTC, AtOpen, AtClose.</td></tr>
+<tr><td><code>orderFlags</code></td><td>uint8</td><td>bit0 locateAttached, bit1 noInternalize, bit2 postOnly, bit3 iso (intermarket sweep), bit4 allowDark.</td></tr>
+<tr><td><code>qty</code></td><td>int64</td><td></td></tr>
+<tr><td><code>price</code></td><td>int64</td><td>0 for market orders.</td></tr>
+<tr><td><code>stopPrice</code></td><td>int64</td><td></td></tr>
+<tr><td><code>displayQty</code></td><td>int64</td><td>0 means fully displayed.</td></tr>
+<tr><td><code>minQty</code></td><td>int64</td><td>Since version 2.</td></tr>
+<tr><td><code>locateId</code></td><td>uint64</td><td>Required when side is SellShort and symbol is not on the ETB list. Risk validates it against the sequenced <code>LocateGranted</code>.</td></tr>
+<tr><td><code>routingProfile</code></td><td>uint16</td><td>Which router strategy set applies (client-selected or default).</td></tr>
+<tr><td><code>strategyId</code></td><td>uint16</td><td>Non-zero when the order comes from an internal strategy rather than a client.</td></tr>
+<tr><td><code>sessionId</code></td><td>uint32</td><td>Gateway session, for drop copy routing.</td></tr>
+<tr><td><code>pegType</code></td><td>uint8</td><td>Primary, Market, Midpoint.</td></tr>
+<tr><td><code>pegOffset</code></td><td>int64</td><td></td></tr>
+<tr><td><code>clientTag</code></td><td>uint64</td><td>Opaque, echoed on every exec report.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="cap">128 bytes after the header. The risk engine reads accountIdx, symbolIdx, side, qty, price and locateId: all within the first cache line.</p>
+
+<h2 id="execreport">ExecReport (template 108)</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>orderId</code>, <code>clOrdId</code>, <code>execId</code></td><td>uint64 ×3</td><td>execId minted by the venue gateway on fill, by the OMS on state changes.</td></tr>
+<tr><td><code>childOrderId</code></td><td>uint64</td><td>0 when the report is on the parent.</td></tr>
+<tr><td><code>accountIdx</code>, <code>symbolIdx</code></td><td>uint32 ×2</td><td></td></tr>
+<tr><td><code>execType</code></td><td>uint8</td><td>New, PartialFill, Fill, Cancelled, Replaced, Rejected, Expired, TradeCorrect, TradeBust.</td></tr>
+<tr><td><code>ordStatus</code></td><td>uint8</td><td>The OMS state after this event.</td></tr>
+<tr><td><code>side</code></td><td>Side</td><td></td></tr>
+<tr><td><code>liquidityFlag</code></td><td>uint8</td><td>Added, Removed, Routed, Auction, Internalized. Drives the fee model and 606 reporting.</td></tr>
+<tr><td><code>lastQty</code>, <code>lastPx</code></td><td>int64 ×2</td><td>This fill.</td></tr>
+<tr><td><code>leavesQty</code>, <code>cumQty</code>, <code>avgPx</code></td><td>int64 ×3</td><td>Parent-level running totals maintained by the OMS.</td></tr>
+<tr><td><code>venueId</code></td><td>uint16</td><td></td></tr>
+<tr><td><code>feeCode</code></td><td>uint16</td><td>Index into the fee schedule in force at <code>seq</code>.</td></tr>
+<tr><td><code>fee</code></td><td>int64</td><td>Computed by the OMS from the schedule; negative for a rebate.</td></tr>
+<tr><td><code>nbboBid</code>, <code>nbboAsk</code></td><td>int64 ×2</td><td>NBBO at the moment of the fill, captured by the OMS from the book. This is what makes best-execution analysis a query rather than a reconstruction.</td></tr>
+<tr><td><code>venueExecId</code></td><td>char[20]</td><td>The one string on the hot path, because clearing and CAT need it verbatim.</td></tr>
+<tr><td><code>venueTs</code></td><td>int64</td><td></td></tr>
+<tr><td><code>rejectReason</code></td><td>uint16</td><td>From the reason-code table; 0 if not a reject.</td></tr>
+<tr><td><code>clientTag</code></td><td>uint64</td><td></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="bookdelta">BookDelta (template 200)</h2>
+<p>Price-level based, not order based. The feed handler consumes the venue's order-level feed and publishes level deltas, because every consumer we have works on levels, and level deltas are an order of magnitude fewer messages. Order-level detail stays in the raw capture for research.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>symbolIdx</code></td><td>uint32</td><td></td></tr>
+<tr><td><code>venueId</code></td><td>uint16</td><td></td></tr>
+<tr><td><code>action</code></td><td>uint8</td><td>Set (level now has this qty), Delete, ClearBook, ClearSide.</td></tr>
+<tr><td><code>side</code></td><td>uint8</td><td>Bid or Ask.</td></tr>
+<tr><td><code>price</code></td><td>int64</td><td></td></tr>
+<tr><td><code>qty</code></td><td>int64</td><td>Absolute quantity at the level after the change. Absolute rather than delta so one lost message cannot corrupt a level forever.</td></tr>
+<tr><td><code>orderCount</code></td><td>uint32</td><td></td></tr>
+<tr><td><code>venueSeq</code></td><td>uint64</td><td>Venue's own sequence number; gap detection.</td></tr>
+<tr><td><code>venueTs</code></td><td>int64</td><td>Venue-stamped time.</td></tr>
+<tr><td><code>flags</code></td><td>uint8</td><td>bit0 endOfPacket (consumers may react now), bit1 fromRecovery.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="cap">48 bytes. At a few billion equity messages a day, size is a network and storage question; this is why level deltas rather than order events.</p>
+
+<h2 id="refmsgs">Reference update messages</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Message</th><th>Payload</th><th>Writer, trigger</th></tr></thead>
+<tbody>
+<tr><td><code>SessionStart</code> (7)</td><td>businessDate, snapshot version, snapshot BLAKE3 hash, schema version</td><td>Sequencer, first message of every day and after any sequencer restart. Engines refuse to run if their loaded snapshot hash differs.</td></tr>
+<tr><td><code>SymbolAdd</code> (300)</td><td>A full <code>SymbolRecord</code> (see below) for a new index</td><td>Security master, intraday listing. Rare; the record is written into the preallocated slot.</td></tr>
+<tr><td><code>SymbolUpdate</code> (301)</td><td>symbolIdx, field selector bitmask, and the new values for selected scalar fields</td><td>Security master, for corrections. A bitmask update rather than a whole record so consumers only touch the fields that changed.</td></tr>
+<tr><td><code>SymbolStatus</code> (206)</td><td>symbolIdx, venueId, status (Halted, Paused, Auction, Trading, Closed), reason</td><td>Feed handlers, as venues announce it. Sequenced so every engine halts at the same point.</td></tr>
+<tr><td><code>ShortSaleRestriction</code> (302)</td><td>symbolIdx, active, effectiveUntil</td><td>Feed handlers (Rule 201 trigger seen on the SIP).</td></tr>
+<tr><td><code>ListUpdate</code> (303)</td><td>listId (ETB, Restricted, Threshold, HardToBorrow), symbolIdx, add/remove, expiryTs</td><td>Stock loan for ETB and HTB; compliance for restricted; security master for threshold.</td></tr>
+<tr><td><code>TickTableUpdate</code> (304)</td><td>tickTableId, band array (price floor, tick) up to 16 bands</td><td>Security master.</td></tr>
+<tr><td><code>FeeScheduleUpdate</code> (305)</td><td>venueId, feeCode, per-share fee or rebate, tier thresholds, effectiveTs</td><td>Router config service, from published schedules. Applied at <code>effectiveTs</code>, not at receipt.</td></tr>
+<tr><td><code>CorporateAction</code> (306)</td><td>symbolIdx, type (Split, ReverseSplit, SymbolChange, Merger, Delist, CashDividend, StockDividend), ratio numerator/denominator, cash amount, newSymbolIdx, effectiveSeq</td><td>Security master, almost always in the overnight snapshot; intraday only for late announcements, applied at <code>effectiveSeq</code>.</td></tr>
+<tr><td><code>CalendarUpdate</code> (307)</td><td>venueId, date, open/close times, session flags</td><td>Security master.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="versioning">Versioning rules</h2>
+<p>SBE's extension model, enforced by a checker in CI:</p>
+<ul>
+<li>Fields are append-only. A new field gets <code>sinceVersion</code> and a default; old readers never see it, new readers decoding old messages get the default.</li>
+<li>Template ids, field ids and enum values are never reused. Deprecated ones are marked and stay in the schema forever.</li>
+<li>A field's type never changes. If a type is wrong, add a new field and deprecate the old one.</li>
+<li>Schema version is a single integer, bumped on any change. Every log records the version each message was written with.</li>
+<li>A new engine must decode every historical log since day one. The CI job replays a sample day from each past schema version.</li>
+<li>The wire header itself (48 bytes) is version 0 and never changes. Anything we later need in the header goes in a message, not the header.</li>
+</ul>
+
+<h2 id="logs">Log topology and scale</h2>
+<p>One sequencer handles tens of millions of messages per second, which is more than enough for orders, fills, risk and reference: the core stream. Market data is the scale problem. US equities direct feeds run a few billion messages a day with bursts above a million per second at the open; options (OPRA) is an order of magnitude more. Sequencing all of it through the core stream would either saturate the sequencer or force the core log to carry data most consumers do not need.</p>
+<div class="diagram" role="img" aria-label="Log topology: several market-data streams, each sequenced independently, feed the hot engines; the core stream carries orders and records watermarks referencing the market-data streams.">
+<svg viewBox="0 0 1000 360" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+<style>
+.bx{fill:var(--panel);stroke:var(--rule);stroke-width:1.2}
+.hb{fill:var(--hot-soft);stroke:var(--hot);stroke-width:1.4}
+.t{fill:var(--ink);font-size:13px;font-weight:600}
+.s{fill:var(--muted);font-size:11px}
+.ln{stroke:var(--muted);stroke-width:1.3;fill:none;marker-end:url(#ah2)}
+.st{stroke:var(--hot);stroke-width:4;fill:none}
+.stm{stroke:var(--cold);stroke-width:4;fill:none}
+</style>
+</defs>
+<text x="20" y="30" class="t">Market-data streams (one sequencer each, partitioned by symbol range or venue)</text>
+<path d="M30 60H420" class="stm"/><text x="30" y="52" class="s">md-stream 1: symbols 0 to 3999, all venues</text>
+<path d="M30 100H420" class="stm"/><text x="30" y="92" class="s">md-stream 2: symbols 4000 to 7999</text>
+<path d="M30 140H420" class="stm"/><text x="30" y="132" class="s">md-stream 3: ...</text>
+<rect x="470" y="40" width="200" height="120" rx="3" class="hb"/>
+<text x="480" y="62" class="t">Hot engine</text>
+<text x="480" y="80" class="s">reads its md-streams and</text>
+<text x="480" y="95" class="s">the core stream; every decision</text>
+<text x="480" y="110" class="s">it writes carries an MdWatermark:</text>
+<text x="480" y="125" class="s">(stream, seq) pairs for the md</text>
+<text x="480" y="140" class="s">state it acted on</text>
+<path d="M420 60 L468 80" class="ln"/><path d="M420 100 L468 100" class="ln"/><path d="M420 140 L468 120" class="ln"/>
+<text x="20" y="220" class="t">Core stream (one sequencer: orders, risk, fills, reference, control)</text>
+<path d="M30 250H960" class="st"/>
+<path d="M570 160 V248" class="ln"/><text x="580" y="200" class="s">RouteDecision + watermark</text>
+<path d="M300 250 V170 H468" class="ln" style="stroke-dasharray:4 3"/><text x="130" y="185" class="s">orders, risk accepts, reference updates</text>
+<rect x="720" y="280" width="250" height="60" rx="3" class="bx"/>
+<text x="730" y="302" class="t">Replay</text>
+<text x="730" y="318" class="s">core seq N + watermarks ⇒ exact book state</text>
+<text x="730" y="333" class="s">each engine saw. Deterministic, sharded.</text>
+</svg>
+</div>
+<p>The rule: market data lives on its own sequenced streams, partitioned by symbol range (so a symbol's data from every venue is on one stream and book building is local). The core stream carries everything else. Any hot-path message that depends on market state carries an <code>MdWatermark</code>: the (stream, seq) pairs it had consumed when it decided. Replay reconstructs precisely the book each engine saw, and the design shards horizontally by adding streams. The same rule lets a market-making engine for symbols 0 to 3999 run on a different host from the one for 4000 to 7999 with no shared state.</p>
+<p>Account-level state (buying power, exposure) is on the core stream and is not sharded; a single risk engine at one microsecond per order handles millions of orders a day. If that ever binds, risk shards by account range, and the router's child orders for one parent stay on one shard.</p>
+
+<h2 id="model">Security master data model</h2>
+<p>The origin system is a PostgreSQL database owned by the security master service. Every table is bitemporal: <code>valid_from</code>/<code>valid_to</code> (when the fact is true in the world) and <code>recorded_at</code> (when we learned it), so "what did we believe about AAPL's tick size at 10:14 on the 3rd" is a query. The published artefacts are the snapshot and the sequenced updates; nothing on the trading floor queries the database.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Entity</th><th>Key</th><th>Core attributes</th><th>Authoritative source, precedence</th></tr></thead>
+<tbody>
+<tr><td>Instrument</td><td><code>symbolIdx</code></td><td>ticker, CUSIP, ISIN, FIGI, SEDOL, instrument type, issuer, share class, listing venue, currency, lot size, tick table, price scale, qty scale, status, settlement days, margin class, sector</td><td>Exchange symbol file for existence, ticker and status; CUSIP Global Services for CUSIP; OpenFIGI for FIGI; vendor for descriptive fields. Conflicts resolved by this order and logged.</td></tr>
+<tr><td>Issuer</td><td><code>issuerId</code></td><td>legal name, LEI, country, sector</td><td>Vendor; GLEIF for LEI.</td></tr>
+<tr><td>Venue</td><td><code>venueId</code></td><td>MIC, name, type (exchange, ATS, wholesaler), protocol, session ids, cancel-on-disconnect policy</td><td>Internal, from venue onboarding.</td></tr>
+<tr><td>Listing</td><td>(<code>symbolIdx</code>, <code>venueId</code>)</td><td>venue-local symbol, tradable flag, venue tick table override</td><td>Venue symbol files.</td></tr>
+<tr><td>TickTable</td><td><code>tickTableId</code></td><td>up to 16 (price floor, tick) bands</td><td>Regulation and venue rules.</td></tr>
+<tr><td>Calendar</td><td>(<code>venueId</code>, date)</td><td>open, close, early close, auction times, holiday</td><td>Exchange schedules.</td></tr>
+<tr><td>CorporateAction</td><td><code>actionId</code></td><td>type, symbol, ex-date, record date, pay date, ratio, cash, new symbol, status (announced, confirmed, applied)</td><td>DTCC via clearing firm and a vendor; must agree or it is held for review.</td></tr>
+<tr><td>List membership</td><td>(<code>listId</code>, <code>symbolIdx</code>)</td><td>ETB, hard-to-borrow, restricted, threshold, SSR active, watch</td><td>Stock loan, compliance, SRO threshold files, SIP.</td></tr>
+<tr><td>FeeSchedule</td><td>(<code>venueId</code>, <code>feeCode</code>, effective date)</td><td>per-share fee/rebate by liquidity flag, tier thresholds, caps</td><td>Venue fee schedule documents, maintained with a reviewed diff.</td></tr>
+<tr><td>Account</td><td><code>accountIdx</code></td><td>owner, type (cash, margin, portfolio margin), entitlements, default routing profile, limits reference</td><td>Account service; published to the snapshot's account section.</td></tr>
+<tr><td>Component</td><td><code>sourceId</code></td><td>name, host, role, stream subscriptions</td><td>Control plane; the component table is in the snapshot so ids in the log resolve.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="pipeline">Nightly pipeline</h2>
+<ol>
+<li><strong>Ingest</strong> each source into a staging table with the raw file hash recorded. Sources: exchange symbol files, SIP end-of-day, vendor descriptive feed, CUSIP file, OpenFIGI resolution, DTCC corporate actions via the clearing firm, vendor corporate actions, SRO threshold lists, stock-loan ETB/HTB output, compliance restricted list, fee schedules, calendars.</li>
+<li><strong>Resolve</strong> into the bitemporal master by precedence; every conflict written to a review table with both values.</li>
+<li><strong>Assign indexes</strong> for any new instrument; indexes are allocated from a monotonic counter and never recycled.</li>
+<li><strong>Apply corporate actions</strong> with tomorrow's ex-date: splits adjust reference prices and lot data, symbol changes create a new listing on the same index, delistings set status.</li>
+<li><strong>Validate</strong>: symbol count within 2% of yesterday, no duplicate identifiers, every symbol that traded yesterday still present or explicitly delisted, tick tables valid, every corporate action with a today ex-date in Applied state, two-source agreement on corporate actions, index continuity. Any failure blocks publication and pages the on-call.</li>
+<li><strong>Publish</strong> the snapshot file: build, hash with BLAKE3, write to the distribution store, and emit the snapshot manifest. The control plane refuses to start the trading day without a manifest whose validation status is green.</li>
+<li><strong>Diff tool</strong>: given two snapshot versions, emit the difference as a series of <code>SymbolUpdate</code>, <code>ListUpdate</code>, <code>CorporateAction</code> messages. This is how an intraday correction is delivered, and it is how a late-night republish is delivered to engines that already loaded the earlier version.</li>
+</ol>
+
+<h2 id="snapshot">Snapshot binary layout</h2>
+<p>The snapshot is one file, memory-mappable, page-aligned, with fixed-size records in every section so any record is found by arithmetic. It is defined in the same SBE schema as the messages (the record types are SBE composites), so the generated codecs read it directly.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Region</th><th>Size</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td>File header</td><td class="num">4 096 B</td><td>magic <code>RFDS</code>; formatVersion u32; schemaVersion u16; businessDate u32 (yyyymmdd); generatedTs i64; snapshotVersion u32 (increments on republish for the same date); sectionCount u16; section table (32 entries × (sectionType u16, recordSize u32, recordCount u32, offset u64, sectionHash 32 B)); source manifest (up to 16 × (sourceId u16, sourceFileHash 32 B, sourceTs i64)); contentHash 32 B (BLAKE3 over all sections).</td></tr>
+<tr><td>Instruments</td><td class="num">256 B × maxSymbolIdx</td><td>One <code>SymbolRecord</code> per index. Unused indexes are zero-filled (status 0 = unset). Sized with headroom: 20 000 slots for US equities today, 65 536 allocated.</td></tr>
+<tr><td>Listings</td><td class="num">64 B × n</td><td>Sorted by (symbolIdx, venueId); plus an offset index per symbol in the record.</td></tr>
+<tr><td>Venues</td><td class="num">256 B × n</td><td>Venue table.</td></tr>
+<tr><td>Tick tables</td><td class="num">272 B × n</td><td>16 bands of (floor i64, tick i64) plus header.</td></tr>
+<tr><td>Calendars</td><td class="num">32 B × n</td><td>(venueId, date, open, close, flags) for a rolling 30 days.</td></tr>
+<tr><td>Corporate actions</td><td class="num">128 B × n</td><td>Applied today and pending within 10 days, for engines that need to anticipate.</td></tr>
+<tr><td>Lists</td><td class="num">8 192 B × listCount</td><td>One bitset per list, indexed by symbolIdx. ETB membership is one bit test.</td></tr>
+<tr><td>Fee schedules</td><td class="num">128 B × n</td><td>In force today.</td></tr>
+<tr><td>Accounts</td><td class="num">128 B × maxAccountIdx</td><td>Type, entitlements, default routing profile, limit set id. Limits themselves come as <code>LimitUpdate</code> messages at session start so they are in the log.</td></tr>
+<tr><td>Components</td><td class="num">64 B × n</td><td>sourceId to name and role.</td></tr>
+<tr><td>Ticker index</td><td class="num">variable</td><td>Sorted array of (ticker char[16], symbolIdx) for the gateway's string lookup; binary search, or a perfect hash built at load.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every section starts on a 4 KiB boundary. The loader verifies the content hash before anything else reads a byte. Total size for US equities is around 25 MB; it loads in milliseconds and sits comfortably in L3 for the fields the hot path uses.</p>
+
+<h2 id="symbolrec">SymbolRecord (256 bytes)</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Offset</th><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td class="num">0</td><td><code>symbolIdx</code></td><td>uint32</td><td>Equals the slot index; kept in the record for integrity.</td></tr>
+<tr><td class="num">4</td><td><code>status</code></td><td>uint8</td><td>Unset, Active, Halted, Suspended, Delisted, PendingListing.</td></tr>
+<tr><td class="num">5</td><td><code>instrumentType</code></td><td>uint8</td><td>CommonStock, ETF, ADR, PreferredStock, Warrant, Right, Unit, Option, Future.</td></tr>
+<tr><td class="num">6</td><td><code>listingVenue</code></td><td>uint16</td><td></td></tr>
+<tr><td class="num">8</td><td><code>tickTableId</code></td><td>uint16</td><td></td></tr>
+<tr><td class="num">10</td><td><code>currency</code></td><td>uint16</td><td>ISO 4217 numeric.</td></tr>
+<tr><td class="num">12</td><td><code>lotSize</code></td><td>uint32</td><td>Round lot.</td></tr>
+<tr><td class="num">16</td><td><code>flags</code></td><td>uint32</td><td>bit0 etb, bit1 hardToBorrow, bit2 restricted, bit3 threshold, bit4 ssrActive, bit5 marginable, bit6 shortable, bit7 fractionalAllowed, bit8 testSymbol, bit9 corpActionToday. Cached from the list bitsets at build time; intraday changes update both.</td></tr>
+<tr><td class="num">20</td><td><code>priceScale</code></td><td>uint8</td><td>Decimal places represented by the price type; 8 for equities.</td></tr>
+<tr><td class="num">21</td><td><code>qtyScale</code></td><td>uint8</td><td>0 for whole shares; 4 for fractional retail (units of 0.0001 share).</td></tr>
+<tr><td class="num">22</td><td><code>settlementDays</code></td><td>uint8</td><td>1 for US equities.</td></tr>
+<tr><td class="num">23</td><td><code>marginClass</code></td><td>uint8</td><td>Index into the margin engine's class table.</td></tr>
+<tr><td class="num">24</td><td><code>refPrice</code></td><td>int64</td><td>Yesterday's official close, adjusted for corporate actions effective today. The fat-finger collar reference until the first trade.</td></tr>
+<tr><td class="num">32</td><td><code>prevClose</code></td><td>int64</td><td>Unadjusted.</td></tr>
+<tr><td class="num">40</td><td><code>adv30</code></td><td>int64</td><td>30-day average daily volume; router and MM sizing.</td></tr>
+<tr><td class="num">48</td><td><code>sharesOutstanding</code></td><td>int64</td><td></td></tr>
+<tr><td class="num">56</td><td><code>issuerId</code></td><td>uint32</td><td></td></tr>
+<tr><td class="num">60</td><td><code>sector</code></td><td>uint16</td><td></td></tr>
+<tr><td class="num">62</td><td><code>shareClass</code></td><td>uint8</td><td></td></tr>
+<tr><td class="num">63</td><td><code>listingCount</code></td><td>uint8</td><td></td></tr>
+<tr><td class="num">64</td><td><code>listingOffset</code></td><td>uint32</td><td>Index of the first row in the listings section.</td></tr>
+<tr><td class="num">68</td><td><code>underlyingIdx</code></td><td>uint32</td><td>For derivatives; 0 otherwise.</td></tr>
+<tr><td class="num">72</td><td><code>ticker</code></td><td>char[16]</td><td></td></tr>
+<tr><td class="num">88</td><td><code>cusip</code></td><td>char[9]</td><td></td></tr>
+<tr><td class="num">97</td><td><code>isin</code></td><td>char[12]</td><td></td></tr>
+<tr><td class="num">109</td><td><code>figi</code></td><td>char[12]</td><td></td></tr>
+<tr><td class="num">121</td><td><code>sedol</code></td><td>char[7]</td><td></td></tr>
+<tr><td class="num">128</td><td><code>name</code></td><td>char[64]</td><td>Display only.</td></tr>
+<tr><td class="num">192</td><td><code>validFrom</code></td><td>int64</td><td>Bitemporal echo, for audit.</td></tr>
+<tr><td class="num">200</td><td><code>lastCorpActionId</code></td><td>uint64</td><td></td></tr>
+<tr><td class="num">208</td><td>reserved</td><td>48 B</td><td>Zero. Future fields are appended here with a schema version bump; readers of older records see zeros, which every field defines as "unset".</td></tr>
+</tbody>
+</table>
+</div>
+<p>The first 64 bytes are everything an engine needs to trade the symbol: status, type, tick table, lot, flags, scales, reference price, ADV. The strings are deliberately in the second half so a scan across all symbols on the hot fields touches one cache line per symbol.</p>
+
+<h2 id="loading">How engines load it</h2>
+<ol>
+<li>Control plane publishes today's manifest (path, version, hash). Engines will not start without it.</li>
+<li>Engine mmaps the file read-only, verifies magic, format version, schema version compatibility and the BLAKE3 content hash.</li>
+<li>Engine copies the fields it uses into its own struct-of-arrays: for the risk engine, a <code>uint32 flags[]</code>, <code>int64 refPrice[]</code>, <code>uint16 tickTable[]</code>; for the market maker, ADV and lot size as well. Copying is deliberate: the engine's arrays are then written by sequenced updates without touching the mapped file, and the file remains the pristine record of what was loaded.</li>
+<li>Engine subscribes to the core stream from the beginning of the day (or from its last checkpoint) and refuses to process past <code>SessionStart</code> unless the message's snapshot hash equals the one it loaded.</li>
+<li>Reference update messages are applied inline on the engine's thread as they arrive in sequence: a <code>ListUpdate</code> is one bit operation; a <code>SymbolUpdate</code> writes the selected fields; a <code>SymbolAdd</code> copies a full record into a preallocated slot.</li>
+<li>Checkpoints (every N seconds, sequenced) let a restarting engine load the snapshot, then apply only the messages since the last checkpoint, rather than replaying from the open.</li>
+</ol>
+
+<h2 id="strategy">Strategy framework</h2>
+<p>Flexibility for strategy design comes from a strict interface, not from a loose one. A strategy is a deterministic object that consumes messages and produces intents. It never touches a socket, a clock, or a file. Everything it knows arrives as messages; everything it wants to do leaves as messages; the framework handles the rest.</p>
+<pre><code>// Every strategy implements this. The framework calls it in sequence order,
+// single-threaded, with no allocation permitted after init().
+class Strategy {
+public:
+  virtual void init(const StrategyContext&amp; ctx,
+                    const RefDataView&amp; ref) = 0;        // snapshot views, params
+  virtual void onBook(const BookView&amp; book, SymIdx s) {}
+  virtual void onTrade(const Trade&amp; t) {}
+  virtual void onNbbo(const Nbbo&amp; n) {}
+  virtual void onFill(const ExecReport&amp; er) {}
+  virtual void onOrderState(const OrderState&amp; os) {}
+  virtual void onPosition(const PositionView&amp; p, SymIdx s) {}
+  virtual void onParam(const StrategyParam&amp; p) {}      // sequenced, replayable
+  virtual void onTimer(Ts now, uint32_t timerId) {}    // timers are log messages too
+  virtual void onRef(const RefUpdate&amp; r) {}
+  virtual void onKill() = 0;                           // must flatten deterministically
+  // Output: strategies write intents; the framework converts them to
+  // NewOrder / Cancel / QuoteIntent and stamps causeSeq.
+protected:
+  Intents&amp; out();
+};</code></pre>
+<ul>
+<li><strong>Parameters are messages.</strong> <code>StrategyParam</code> (strategyId, paramId, value as int64 or fixed-point) is sequenced, so a parameter change is an event in the log with a time and a cause, and replay reproduces the strategy's behaviour before and after it. Research fits parameters in Python and publishes them through the control plane; the live engine has no learning code.</li>
+<li><strong>Timers are messages.</strong> A strategy asks for a timer; the framework sequences a <code>Timer</code> message when it fires. Replay sees the same timer at the same sequence position, so "what would this strategy have done" is answerable exactly.</li>
+<li><strong>Signals are messages.</strong> A signal computed by one component (toxicity score, borrow-rate change, microprice from a model) is published as <code>Signal</code> (signalId, symbolIdx, value) and consumed by any strategy. New signals never change the core schema.</li>
+<li><strong>Same binary in simulation and production.</strong> The simulator feeds recorded or synthetic streams; the strategy cannot tell. A strategy is promoted by running it against the last 60 recorded days in CI, comparing its intents to a stored baseline, and reviewing the diff.</li>
+<li><strong>Hot deployment without a stop.</strong> Start the new strategy instance in shadow mode: it consumes the live log and writes intents to a shadow stream that the framework drops. When its state is caught up, a sequenced <code>StrategyStart</code> switches the live intent stream to the new instance and a <code>StrategyStop</code> retires the old one, at the same sequence number, so there is no window where both or neither are live.</li>
+<li><strong>Sandboxing.</strong> Strategy code runs in the engine process for latency, so its safety comes from the interface (no I/O possible), from the risk engine downstream (every intent still passes risk), and from per-strategy limits (<code>InventoryLimit</code>, message rate, max notional) enforced by the framework before the intent becomes an order.</li>
+</ul>
+
+<h2 id="observe">Observability in the schema</h2>
+<ul>
+<li><strong>Per-message latency</strong> is the difference between <code>originTs</code> and <code>seqTs</code>, and between an effect's <code>seqTs</code> and its cause's. No instrumentation needed; a Python one-liner over the log gives the p99.9 for any stage on any day.</li>
+<li><strong>Telemetry stream.</strong> Components write <code>LatencySample</code> (stage, histogram bucket counts per second) and <code>QueueDepth</code> to a separate stream that is not sequenced with the core log, so telemetry can never slow trading. An exporter turns it into Prometheus metrics for Grafana; alerting is on percentiles, not means.</li>
+<li><strong>Causal tracing.</strong> The <code>causeSeq</code> chain is exported per order to a trace viewer (OpenTelemetry format) so an engineer sees the order's life as a waterfall with real timestamps.</li>
+<li><strong>Business metrics from the same log</strong>: fill rate, reject reasons, quote uptime per symbol, inventory, price improvement per internalised fill, locate grant rate, all computed by cold-path consumers with no extra instrumentation in the hot path.</li>
+<li><strong>Determinism check as a metric.</strong> The standby engines compare their state hash to the primary's at every checkpoint. A divergence is a page; it means non-determinism has crept in and the replay guarantee is at risk.</li>
+</ul>
+
+<h2 id="resilience">Resilience</h2>
+<ul>
+<li><strong>Sequencer.</strong> Primary journals to NVMe before fan-out; standby consumes the fan-out and journals independently; promotion resumes from the last durable sequence. Aeron Cluster provides this pattern with Raft consensus if we want a multi-node log rather than primary/standby; the choice is a deployment decision, not a schema one.</li>
+<li><strong>Idempotency.</strong> Every inbound external event carries an idempotency key (venue exec id, client clOrdId with session); the gateway drops duplicates before sequencing, and the OMS drops a duplicate fill by exec id if one slips through.</li>
+<li><strong>Gap handling.</strong> Consumers detect a sequence gap and request replay from the sequencer's archive; they never process past a gap. Market-data streams do the same against their own archives.</li>
+<li><strong>Checkpoints.</strong> Sequenced <code>Checkpoint</code> messages mark points where every engine writes its state hash; a restart loads the snapshot, applies from the last checkpoint, and verifies the hash before going live.</li>
+<li><strong>Kill switch.</strong> One sequenced message; every engine cancels all open orders and pulls all quotes at the same sequence number, and the venue gateways send cancel-on-disconnect regardless.</li>
+<li><strong>Schema-level safety.</strong> No message can be interpreted two ways: fixed layout, explicit versions, reserved fields zero.</li>
+</ul>
+
+<h2 id="oss">Open-source choices</h2>
+<p>Each of these fits the philosophy: deterministic, allocation-free where it touches the hot path, and boring where it does not.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Need</th><th>Choice</th><th>Fit</th><th>Alternative considered</th></tr></thead>
+<tbody>
+<tr><td>Message encoding and codegen</td><td>SBE (real-logic/simple-binary-encoding, Apache 2.0)</td><td>Zero-copy flyweights, versioning model, C++/Go/Java/Rust generators. The schema file is the design document.</td><td>FlatBuffers (indirection cost), Cap'n Proto (fewer generators for our targets).</td></tr>
+<tr><td>Transport, sequencer, archive</td><td>Aeron and Aeron Archive (Apache 2.0); Aeron Cluster if we choose consensus over primary/standby</td><td>Shared-memory IPC and reliable UDP multicast at single-digit microseconds, persistent archive with replay by position, C++ client. Designed alongside SBE.</td><td>Chronicle Queue (Java-centric), ZeroMQ (no persistence), in-house ring (we still write a thin one for intra-process).</td></tr>
+<tr><td>Kernel bypass</td><td>OpenOnload (open source since 2022) on Solarflare/AMD NICs; DPDK where Onload does not apply</td><td>Onload keeps the socket API, which keeps venue gateway code portable to the simulator.</td><td>ef_vi direct (lower latency, more code), XDP (not low enough).</td></tr>
+<tr><td>Hashing</td><td>BLAKE3</td><td>Fast enough to hash the snapshot and per-checkpoint state without mattering.</td><td>SHA-256 (slower, no benefit).</td></tr>
+<tr><td>Security master database</td><td>PostgreSQL</td><td>Bitemporal tables, mature, boring. Nothing on the hot path touches it.</td><td></td></tr>
+<tr><td>Tick store and analytics</td><td>Apache Arrow and Parquet for the archive; ClickHouse for query</td><td>The generated Arrow schema converts logs to Parquet directly; ClickHouse scans billions of rows for TCA and surveillance. Both open source.</td><td>kdb+ (excellent, proprietary and expensive), QuestDB (good for time series, weaker for joins).</td></tr>
+<tr><td>Cold-path messaging</td><td>NATS JetStream or Apache Kafka</td><td>Fan-out of the sequenced log to cold services with their own consumer offsets. Kafka if the compliance vendor expects it.</td><td></td></tr>
+<tr><td>Metrics, dashboards, tracing</td><td>Prometheus, Grafana, OpenTelemetry collector</td><td>Standard, and the trace format fits the causeSeq waterfall.</td><td></td></tr>
+<tr><td>Testing</td><td>Catch2 or GoogleTest; a property-based layer with RapidCheck for the state machines; the simulator harness (ours)</td><td>Determinism means tests are exact comparisons, not tolerances.</td><td></td></tr>
+<tr><td>Build</td><td>CMake with Ninja, or Bazel if the monorepo grows past a few hundred targets; Clang with libc++; sanitizers in CI</td><td></td><td></td></tr>
+<tr><td>FIX</td><td>Not open source: license a low-latency C++ FIX engine (OnixS, Rapid Addition) or build</td><td>QuickFIX is open source and correct but allocates and locks on every message; unacceptable on the hot path.</td><td></td></tr>
+<tr><td>Research</td><td>Python with NumPy, Polars, PyArrow; parameters published through the control plane</td><td>No Python on the hot path, ever.</td><td></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note">
+<p><strong>Aeron and SBE are the two that shape the code.</strong> They come from the same authors, they are designed to be used together, and they are the basis of several production exchanges and clearing systems. Adopting them means our sequencer is Aeron Archive with our ordering logic on top, our IPC is Aeron shared-memory, and our messages are SBE. The one thing we still write ourselves is the single-writer ordering core and the watermark logic, which is a few thousand lines and the part that must be ours.</p>
+</div>
+
+<h2 id="repo">Repository layout</h2>
+<pre><code>trading/
+  schema/
+    trading.xml            # the one schema: messages, snapshot records, enums
+    reasons.csv            # reject and decision reason codes, generated into the schema
+    CHANGELOG.md           # every version bump, reviewed
+  gen/                     # generated codecs, never edited: cpp/ go/ py/ ts/ arrow/
+  core/
+    seq/                   # sequencer, journal, watermark, checkpoint
+    ipc/                   # rings, shared-memory book views, seqlock
+    refdata/               # snapshot loader, struct-of-arrays views, update appliers
+    md/                    # feed handlers, book builder
+    risk/  oms/  router/  mm/  poskeeper/  venue/  gateway/
+    strategy/              # framework and strategy implementations
+  services/                # Go: secmaster, stockloan, margin, posttrade, compliance, control
+  sim/                     # venue and feed simulators, replay driver, determinism checker
+  research/                # Python: TCA, model fitting, parameter publishing
+  tools/                   # snapshot build/diff/verify, log inspect, trace export
+  ops/                     # deployment, runbooks, DR procedures</code></pre>
+
+<h2 id="next">First code</h2>
+<p>The natural first deliverables, in order, each with tests that run in CI:</p>
+<ol>
+<li><code>schema/trading.xml</code> with the control, order, market-data and reference families, the <code>FrameHeader</code>, and the snapshot record composites; the codegen wired into the build; the compatibility checker.</li>
+<li><code>tools/snapshot</code>: build a snapshot from a CSV fixture, verify it, diff two snapshots into messages. This exercises the record layouts before any engine exists.</li>
+<li><code>core/refdata</code>: the loader, the struct-of-arrays views, and the update appliers, with a test that loads a snapshot, applies a day of synthetic reference updates, and matches the resulting state to a snapshot built for the next day.</li>
+<li><code>core/seq</code>: the ordering core over Aeron, the journal, the watermark, and a determinism test: two consumers replay the same log and hash to the same state.</li>
+</ol>
+<p>Say the word and I will write the schema file first, complete, with the generator build and the checker, so the rest has something to compile against.</p>
+
+<footer>Design prepared September 2026. Layouts are proposals; offsets are shown to make cache-line placement explicit and will be confirmed by the generated codecs. Open-source licences noted are as of the components' current releases and should be re-verified at adoption.</footer>
+</main>
+</div>
+</body>
+</html>
