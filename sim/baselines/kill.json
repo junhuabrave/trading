@@ -1,0 +1,16 @@
+{
+  "scenario": "kill",
+  "seed": 7,
+  "steps": 3000,
+  "orders": 2133,
+  "accepted": 1527,
+  "rejected": 606,
+  "fills": 1534,
+  "cancelled": 261,
+  "children": 1527,
+  "checkpoints": 10,
+  "coreSeq": 18505,
+  "mdSeq": 10355,
+  "verified": 5197,
+  "finalHash": "85b638332a92f90ba6e7aafe927022a64f758feac7a39ecb58c8977ed43e852b"
+}

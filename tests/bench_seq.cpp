@@ -13,7 +13,7 @@ static int64_t now() { return std::chrono::duration_cast<std::chrono::nanosecond
 
 int main(int argc, char** argv) {
     std::string dir = argc > 1 ? argv[1] : "build/seqbench"; std::filesystem::create_directories(dir);
-    std::filesystem::remove(dir + "/core.jnl");
+    std::filesystem::remove_all(dir + "/core.jnl");
     // 1. throughput: 5M NewOrder frames sequenced, journaled (buffered), published, drained in the same thread
     {
         const size_t N = 5'000'000;

@@ -35,10 +35,20 @@ struct Harness {
     NewOrder mk(uint32_t acct, uint32_t sym, Side side, int64_t qty, int64_t px, uint64_t locate = 0) {
         NewOrder o{}; o.accountIdx = acct; o.symbolIdx = sym; o.side = side; o.qty = qty; o.price = px; o.locateId = locate; o.sessionId = 9; return o;
     }
-    void limits(uint32_t acct, uint32_t sym, int64_t maxQty, int64_t maxNotional, int64_t gross, int64_t net, uint32_t collar, uint32_t rate, uint32_t open) {
+    void limits(uint32_t acct, uint32_t sym, int64_t maxQty, int64_t maxNotional, int64_t gross, int64_t net, uint32_t collar, uint32_t rate, uint32_t open, uint32_t dupMs = 0) {
         Frame<LimitUpdate> f; f.init(); f.body.accountIdx = acct; f.body.symbolIdx = sym; f.body.maxOrderQty = maxQty;
         f.body.maxOrderNotional = maxNotional; f.body.maxGrossExposure = gross; f.body.maxNetExposure = net;
-        f.body.priceCollarBps = collar; f.body.maxMsgRate = rate; f.body.maxOpenOrders = open; send(f);
+        f.body.priceCollarBps = collar; f.body.maxMsgRate = rate; f.body.maxOpenOrders = open; f.body.dupWindowMs = dupMs; send(f);
+    }
+    // Sequence a ReplaceOrder, evaluate it, sequence the RiskDecision.
+    Reason replace(uint64_t orderId, uint32_t acct, int64_t qty, int64_t px) {
+        Frame<ReplaceOrder> f; f.init(); f.header.sourceId = 2; f.body.orderId = orderId; f.body.accountIdx = acct;
+        f.body.clOrdId = clOrd++; f.body.sessionId = 9; f.body.qty = qty; f.body.price = px;
+        put(&f.header);
+        Frame<RiskDecision> d; d.init(); d.header.sourceId = 3; d.header.causeSeq = f.header.seq;
+        e.evaluateReplace(&f.header, f.body, d.body);
+        put(&d.header);
+        return Reason(d.body.reason);
     }
     void buyingPower(uint32_t acct, int64_t bp) { Frame<BuyingPowerUpdate> f; f.init(); f.body.accountIdx = acct; f.body.buyingPower = bp; send(f, 11); }
     void cancel(uint64_t orderId) { Frame<OrderState> f; f.init(); f.body.orderId = orderId; f.body.status = OrdStatus::Cancelled; send(f, 4); }
@@ -51,9 +61,10 @@ static constexpr int64_t USD = 100'000'000;   // 1e-8 units
 
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
-    fs::create_directories(argv[2]); std::string jp = std::string(argv[2]) + "/risk.jnl"; fs::remove(jp);
+    fs::create_directories(argv[2]); std::string jp = std::string(argv[2]) + "/risk.jnl"; fs::remove_all(jp);
     Snapshot snap(argv[1]); RefData rd; rd.load(snap);
-    auto eng = std::make_unique<RiskEngine>(rd);
+    auto eng = std::make_unique<RiskEngine>(rd); eng->load(snap);
+    CHECK(eng->accountKnown(42) && !eng->accountKnown(7));                                   // snapshot accounts section
     FakeClock clock; BroadcastRing ring(1 << 12); Journal j(jp, 0); Sequencer seq(0, 1, j, ring, clock, 0);
     int rid = ring.subscribe();
     seq.openSession(snap.businessDate(), snap.version(), snap.contentHash());
@@ -152,7 +163,30 @@ int main(int argc, char** argv) {
     CHECK(h.order(h.mk(7, AAPL, Side::Buy, 100, ap)) == Reason::FirmKilled);
     { Frame<KillSwitch> k; k.init(); k.body.release = 1; h.send(k, 13); k.body.accountIdx = 42; h.send(k, 13); }   // lift both
     CHECK(h.order(h.mk(7, AAPL, Side::Buy, 100, ap), &oid) == Reason::NoReason); h.cancel(oid);
-    std::printf("all %d reject reasons exercised; accepts=%llu rejects=%llu\n", 27, (unsigned long long)eng->accepts(), (unsigned long long)eng->rejects());
+    // ---- duplicate-order window (v3): identical symbol/side/qty/price within 100 ms
+    h.buyingPower(8, 1'000'000 * USD); h.limits(8, 0, 0, 0, 0, 0, 0, 0, 0, 100);
+    CHECK(h.order(h.mk(8, AAPL, Side::Buy, 100, ap), &oid) == Reason::NoReason);
+    CHECK(h.order(h.mk(8, AAPL, Side::Buy, 100, ap)) == Reason::DuplicateOrder);
+    CHECK(h.order(h.mk(8, AAPL, Side::Buy, 200, ap), &oid) == Reason::NoReason);              // different qty is not a duplicate
+    clock.t += 200'000'000LL;
+    CHECK(h.order(h.mk(8, AAPL, Side::Buy, 100, ap), &oid) == Reason::NoReason);              // window passed
+    int64_t bp8 = eng->buyingPower(8);
+
+    // ---- replace: unknown, qty up (more buying power), price off tick (state unchanged), qty down, qty at or below filled
+    CHECK(h.replace(0xDEAD, 8, 100, ap) == Reason::UnknownOrder);
+    CHECK(h.replace(oid, 8, 300, ap) == Reason::NoReason);                                    // 100 -> 300
+    CHECK(eng->openLeaves(oid) == 300 && eng->buyingPower(8) == bp8 - (200 * ap) / 2);
+    CHECK(h.replace(oid, 8, 300, ap + 5000) == Reason::PriceNotOnTick);
+    CHECK(eng->openLeaves(oid) == 300 && eng->buyingPower(8) == bp8 - (200 * ap) / 2);        // reject left it untouched
+    CHECK(h.replace(oid, 8, 50, ap) == Reason::NoReason);                                     // 300 -> 50 releases
+    CHECK(eng->openLeaves(oid) == 50 && eng->buyingPower(8) == bp8 + (50 * ap) / 2);
+    h.fill(oid, 30, ap, false);
+    CHECK(h.replace(oid, 8, 30, ap) == Reason::QtyZero);                                      // nothing would be left open
+    CHECK(h.replace(oid, 8, 40, ap) == Reason::NoReason && eng->openLeaves(oid) == 10);
+    CHECK(h.replace(oid, 8, 40'000'000, ap) == Reason::InsufficientBuyingPower && eng->openLeaves(oid) == 10);
+    std::printf("duplicate window and replace paths ok\n");
+
+    std::printf("all %d reject reasons exercised; accepts=%llu rejects=%llu\n", 29, (unsigned long long)eng->accepts(), (unsigned long long)eng->rejects());
     drain();
 
     // ---- random flow on a fresh account, then cold replay must reproduce every verdict
@@ -166,6 +200,10 @@ int main(int argc, char** argv) {
         NewOrder o = h.mk(500, sym, (rng() % 5 == 0) ? Side::SellShort : (rng() & 1 ? Side::Buy : Side::Sell), int64_t(1 + rng() % 500) * 10, px);
         if (rng() % 7 == 0) o.price += 3;  // off-tick
         if (h.order(o, &oid) == Reason::NoReason) { live.push_back(oid); ++acc; }
+        if (rng() % 5 == 0 && !live.empty()) {
+            size_t k = rng() % live.size(); int64_t q = int64_t(1 + rng() % 600) * 10;
+            if (h.replace(live[k], 500, q, ref + (int64_t(rng() % 100) - 50) * 1'000'000) == Reason::UnknownOrder) { live[k] = live.back(); live.pop_back(); }
+        }
         if (live.size() > 200 || (rng() % 3 == 0 && !live.empty())) {
             size_t k = rng() % live.size(); h.cancel(live[k]); live[k] = live.back(); live.pop_back();
         }
@@ -177,12 +215,13 @@ int main(int argc, char** argv) {
     std::printf("random flow: %d orders, %d accepted, %.0f ns per order incl. sequencing both frames\n", N, acc, nsPer);
 
     {   // cold replay: a second engine over the journal; its evaluate() must match every sequenced RiskDecision
-        RefData rd2; rd2.load(snap); auto cold = std::make_unique<RiskEngine>(rd2);
-        NewOrder last{}; FrameHeader lastHdr{}; uint64_t checked = 0, mismatch = 0;
+        RefData rd2; rd2.load(snap); auto cold = std::make_unique<RiskEngine>(rd2); cold->load(snap);
+        NewOrder last{}; ReplaceOrder lastRep{}; bool isReplace = false; FrameHeader lastHdr{}; uint64_t checked = 0, mismatch = 0;
         j.replay(1, 0, [&](const FrameHeader* f) {
-            if (auto* o = as<NewOrder>(f)) { last = *o; lastHdr = *f; return; }
+            if (auto* o = as<NewOrder>(f)) { last = *o; lastHdr = *f; isReplace = false; return; }
+            if (auto* r = as<ReplaceOrder>(f)) { lastRep = *r; lastHdr = *f; isReplace = true; return; }
             if (auto* d = as<RiskDecision>(f)) {
-                RiskDecision mine{}; cold->evaluate(&lastHdr, last, mine); ++checked;
+                RiskDecision mine{}; if (isReplace) cold->evaluateReplace(&lastHdr, lastRep, mine); else cold->evaluate(&lastHdr, last, mine); ++checked;
                 if (mine.verdict != d->verdict || mine.reason != d->reason || mine.buyingPowerAfter != d->buyingPowerAfter) ++mismatch;
                 return;
             }

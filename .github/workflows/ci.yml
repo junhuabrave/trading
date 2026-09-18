@@ -1,7 +1,7 @@
 name: ci
 on: [push, pull_request]
 jobs:
-  test:
+  gcc:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -15,3 +15,34 @@ jobs:
         run: make test CXX=g++-13
       - name: bench (informational)
         run: make bench CXX=g++-13
+
+  clang-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev make python3-pip
+          pip install --break-system-packages blake3
+      - name: build and test under ASan and UBSan with libc++
+        run: |
+          make test CXX=clang++-18 CC=clang-18 \
+            CXXFLAGS="-std=c++23 -O1 -g -stdlib=libc++ -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Werror -pedantic"
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      - name: fuzz journal recovery and snapshot loader
+        run: make fuzz CXX=clang++-18 CC=clang-18 FUZZ_SECONDS=60
+
+  go-codec:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y g++-13 make python3
+      - name: generate and round-trip through Go
+        run: make gotest CXX=g++-13

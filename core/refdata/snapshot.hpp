@@ -62,6 +62,7 @@ public:
         const SectionEntry* e = section(s);
         if (!e) return {};
         if (e->recordSize != sizeof(R)) throw std::runtime_error("snapshot: record size mismatch");
+        if (e->recordCount > (size_ - e->offset) / sizeof(R)) throw std::runtime_error("snapshot: section beyond EOF");
         return std::span<const R>(reinterpret_cast<const R*>(base_ + e->offset), e->recordCount);
     }
     std::span<const SymbolRecord> instruments() const { return records<SymbolRecord>(Section::Instruments); }
@@ -110,8 +111,11 @@ private:
         for (uint16_t i = 0; i < hdr_->sectionCount; ++i) {
             const SectionEntry& e = entries[i];
             if (e.offset % PAGE != 0) throw std::runtime_error("snapshot: section not page aligned");
-            size_t len = size_t(e.recordSize) * e.recordCount;
-            if (e.offset + len > size_) throw std::runtime_error("snapshot: section beyond EOF");
+            if (e.offset > size_) throw std::runtime_error("snapshot: section beyond EOF");
+            // bounds in wide arithmetic: a corrupt header's recordSize x recordCount can wrap size_t
+            unsigned __int128 wide = (unsigned __int128)e.recordSize * e.recordCount;
+            if (wide > size_ - e.offset) throw std::runtime_error("snapshot: section beyond EOF");
+            size_t len = size_t(wide);
             uint8_t h[32];
             blake3_hasher sh; blake3_hasher_init(&sh);
             blake3_hasher_update(&sh, base_ + e.offset, len);

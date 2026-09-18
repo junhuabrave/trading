@@ -1,0 +1,16 @@
+{
+  "scenario": "adversarial",
+  "seed": 7,
+  "steps": 4000,
+  "orders": 2779,
+  "accepted": 2230,
+  "rejected": 549,
+  "fills": 2316,
+  "cancelled": 329,
+  "children": 2230,
+  "checkpoints": 13,
+  "coreSeq": 25622,
+  "mdSeq": 13853,
+  "verified": 7252,
+  "finalHash": "9ac8e3901af4a5f67e99781e21fae96e22281fff74da480470fc82c461e74b3c"
+}

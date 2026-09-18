@@ -1,0 +1,16 @@
+{
+  "scenario": "scripted",
+  "seed": 7,
+  "steps": 5000,
+  "orders": 1039,
+  "accepted": 983,
+  "rejected": 56,
+  "fills": 1001,
+  "cancelled": 163,
+  "children": 983,
+  "checkpoints": 6,
+  "coreSeq": 10440,
+  "mdSeq": 3691,
+  "verified": 3011,
+  "finalHash": "b9c5b54a832a102ac2628e196934c560612a713612755e7feaed96abad141d19"
+}

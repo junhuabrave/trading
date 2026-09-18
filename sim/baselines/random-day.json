@@ -1,0 +1,16 @@
+{
+  "scenario": "random-day",
+  "seed": 7,
+  "steps": 6000,
+  "orders": 4214,
+  "accepted": 3973,
+  "rejected": 241,
+  "fills": 4258,
+  "cancelled": 647,
+  "children": 3973,
+  "checkpoints": 22,
+  "coreSeq": 42286,
+  "mdSeq": 20917,
+  "verified": 12182,
+  "finalHash": "3fea73eac513cd998219312040b64a53f02a7d3d3df5bdf51347959fdaa707c0"
+}

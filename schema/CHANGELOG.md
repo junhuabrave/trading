@@ -3,6 +3,19 @@
 Every version bump is recorded here with the reason. `tools/schema_check.py OLD NEW`
 must pass before a bump merges.
 
+## v3 (2026-09-18)
+Frozen v2 copy under `schema/versions/trading-v2.xml`. All additions append-only; no block length changed.
+* `CheckpointAck` (13): an engine's state hash after a `Checkpoint`, so divergence is visible in production.
+* `ClockSync` (14), `MdSourceSwitch` (15): cross-host time, and an engine's change of market-data source.
+* `VenueSessionStatus` (110) and `ChildOrder.venueSessionIdx` (out of trailing pad): venue session pools.
+* `BookSnapshot` (205), `FeedStatus` (207): late-join recovery and line-arbitrator health for the market-data layering.
+* `VenueScorecard` (308), `RoutingProfileUpdate` (309): router inputs from TCA and the control plane.
+* `LimitUpdate.dupWindowMs` (out of trailing pad): duplicate-order window; 0 keeps the old behaviour.
+* `FeedRecord` composite, snapshot section 12 (feeds). `ComponentRole.DropCopy`. `OrderFlags.ssrRepriced`.
+* Enums `MdQuality`, `FeedState`, `FeedKind`, `SessionState`, `RouteStrategy`; set `FeedProvides`.
+* Reason 118 `DuplicateOrder`.
+* Generator now emits Go (`gen/go`) and `MAX_BLOCK_LENGTH`.
+
 ## v2 (2026-09-16)
 `KillSwitch.release` (uint8, sinceVersion 2) added out of trailing padding: a kill switch
 can now be lifted by the same message with release=1. Old readers ignore the field and

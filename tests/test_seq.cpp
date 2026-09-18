@@ -74,13 +74,13 @@ int main(int argc, char** argv) {
     if (argc != 3) { std::fprintf(stderr, "usage: %s day1.bin workdir\n", argv[0]); return 2; }
     fs::create_directories(argv[2]);
     std::string coreJ = std::string(argv[2]) + "/core.jnl", mdJ = std::string(argv[2]) + "/md.jnl";
-    fs::remove(coreJ); fs::remove(mdJ);
+    fs::remove_all(coreJ); fs::remove_all(mdJ);
 
     Snapshot snap(argv[1]);
     const uint32_t NSYM = snap.lookupTicker("NVDA");            // symbols 1..10
     FakeClock clock;
     BroadcastRing coreRing(1 << 14), mdRing(1 << 16);
-    Journal coreJournal(coreJ, 0), mdJournal(mdJ, 1);
+    Journal coreJournal(coreJ, 0, 1, 256 * 1024), mdJournal(mdJ, 1);   // small segments: rotation is exercised
     Sequencer core(0, 1, coreJournal, coreRing, clock, 2000);   // checkpoint every 2000 frames
     Sequencer md(1, 8, mdJournal, mdRing, clock, 0);
 
@@ -182,6 +182,8 @@ int main(int argc, char** argv) {
     CHECK(liveOms.orders == ORDERS && liveOms.rejected > 0 && liveOms.accepted > 0);
     CHECK(liveOms.decisions == liveOms.accepted);
     CHECK(liveCheckpoints.size() >= 10);
+    CHECK(coreJournal.segments() > 4);
+    std::printf("journal: %zu segments, %llu frames, %llu bytes\n", coreJournal.segments(), (unsigned long long)coreJournal.frames(), (unsigned long long)coreJournal.sizeBytes());
 
     // ----- 1. cold replay from the journals, core-only order, md pulled to each watermark
     {
@@ -228,25 +230,29 @@ int main(int argc, char** argv) {
         std::vector<std::pair<uint64_t, std::array<uint8_t, 32>>> cps;
         StreamReader late(coreRing, coreJournal, 1);
         core.heartbeat(ComponentState::Live);                        // one live frame after the gap
+        uint64_t replayedFlags = 0;
         uint64_t n = late.poll([&](const FrameHeader* f) {
+            if (f->flags & FrameFlags::replayed) ++replayedFlags;
             if (as<Checkpoint>(f)) { cps.push_back({f->seq, oms.hash(rd)}); return; }
             const NewOrder* o = nullptr; onCore(f, rd, oms, &o);
         });
         std::printf("late reader: delivered %llu frames, %llu refilled from journal across %llu gap(s), %llu live\n",
             (unsigned long long)n, (unsigned long long)late.refilled(), (unsigned long long)late.gaps(), (unsigned long long)late.live());
         CHECK(late.refilled() > 0 && late.live() >= 1 && cps == liveCheckpoints);
+        CHECK(replayedFlags == late.refilled());
         CHECK(late.expected() == core.lastSeq() + 1);
     }
 
     // ----- 3. crash recovery: torn tail is truncated, sequencer resumes
     uint64_t before = core.lastSeq();
     {
-        std::FILE* fp = std::fopen(coreJ.c_str(), "ab");
+        std::FILE* fp = std::fopen(coreJournal.activeSegmentPath().c_str(), "ab");
         Frame<Heartbeat> hb; hb.init(); hb.header.seq = before + 1;
         std::fwrite(&hb, 1, 30, fp);                                 // partial frame
         std::fclose(fp);
-        Journal reopened(coreJ, 0);
+        Journal reopened(coreJ, 0, 1, 256 * 1024);
         CHECK(reopened.lastSeq() == before && reopened.truncatedOnOpen() == 30);
+        CHECK(reopened.segments() == coreJournal.segments() && reopened.frames() == coreJournal.frames());
         Sequencer resumed(0, 1, reopened, coreRing, clock, 0);
         CHECK(resumed.nextSeq() == before + 1);
         resumed.heartbeat(ComponentState::Live);
@@ -259,7 +265,7 @@ int main(int argc, char** argv) {
 
     // ----- 4. back-pressure: tiny ring, slow reader
     {
-        BroadcastRing tiny(8); FakeClock c2; fs::remove(std::string(argv[2]) + "/bp.jnl");
+        BroadcastRing tiny(8); FakeClock c2; fs::remove_all(std::string(argv[2]) + "/bp.jnl");
         Journal j(std::string(argv[2]) + "/bp.jnl", 5); Sequencer s(5, 1, j, tiny, c2, 0);
         int r = tiny.subscribe();
         int accepted = 0; Frame<Heartbeat> hb;

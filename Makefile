@@ -3,19 +3,20 @@ CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra -Werror -pedantic
 B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DBLAKE3_USE_NEON=0
-INC       = -Igen/cpp -Icore/refdata -Icore/seq -Icore/risk -Ithird_party/blake3
+INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Isim -Ithird_party/blake3
 B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
-.PHONY: all gen check test clean bench
+.PHONY: all gen check test clean bench fuzz gotest baselines
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/bench build/bench_seq build/bench_risk
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/run_sim build/bench build/bench_seq build/bench_risk
 
 gen: gen/cpp/trading.hpp
-gen/cpp/trading.hpp gen/py/trading.py gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
+gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
 	python3 tools/sbegen.py schema/trading.xml gen
 
 check:
-	python3 tools/schema_check.py schema/versions/trading-v1.xml schema/trading.xml
+	python3 tools/schema_check.py schema/versions/trading-v1.xml schema/versions/trading-v2.xml
+	python3 tools/schema_check.py schema/versions/trading-v2.xml schema/trading.xml
 
 build:
 	mkdir -p build
@@ -36,6 +37,9 @@ build/bench_seq: tests/bench_seq.cpp core/seq/*.hpp gen/cpp/trading.hpp | build
 	$(CXX) $(CXXFLAGS) $(INC) $< -o $@ -lpthread
 
 build/test_risk: tests/test_risk.cpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/run_sim: sim/run_sim.cpp sim/*.hpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/bench_risk: tests/bench_risk.cpp core/risk/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -70,6 +74,15 @@ test: check all build/refdata-diff.log
 	./build/test_seq build/refdata-20260915-v1.bin build/seqtest
 	@echo "== risk: every reject reason, credit maths, replay determinism"
 	./build/test_risk build/refdata-20260915-v1.bin build/risktest
+	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/kill --scenario kill --steps 3000 --drill kill --baseline sim/baselines/kill.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/session-drop --scenario session-drop --steps 3000 --drill session-drop --baseline sim/baselines/session-drop.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/rate-burst --scenario rate-burst --steps 2000 --drill rate-burst
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/torn-tail --scenario torn-tail --steps 1000 --drill torn-tail
+	python3 sim/scenarios/make_scenario.py build/refdata-20260915-v1.bin build/sim/scripted.log --orders 1500
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/scripted --scenario scripted --events build/sim/scripted.log --baseline sim/baselines/scripted.json
 	@echo "== all tests passed"
 
 bench: build/bench build/bench_seq build/refdata-20260915-v1.bin
@@ -77,5 +90,29 @@ bench: build/bench build/bench_seq build/refdata-20260915-v1.bin
 	./build/bench_seq build/seqbench
 	./build/bench_risk build/refdata-20260915-v1.bin
 
+# libFuzzer targets (clang only): journal recovery and the snapshot loader over corrupt input
+fuzz: build/fuzz_journal build/fuzz_snapshot
+	./build/fuzz_journal -max_total_time=$(FUZZ_SECONDS) -max_len=8192
+	./build/fuzz_snapshot -max_total_time=$(FUZZ_SECONDS) -max_len=8192
+FUZZ_SECONDS ?= 30
+build/fuzz_%: tests/fuzz/fuzz_%.cpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) -std=c++23 -O1 -g -fsanitize=fuzzer,address,undefined $(INC) $< $(B3OBJ) -o $@
+
+# Go codec round trip (needs a Go toolchain; CI runs it)
+gotest: gen build/cpp.log
+	cd tests/go && go vet ./... && TRADING_BUILD=$(CURDIR)/build go test -v ./...
+	cmp build/cpp.log build/go.log && echo "go log byte-identical"
+build/cpp.log: build/test_codec
+	./build/test_codec write build/cpp.log
+
 clean:
-	rm -rf build gen/cpp gen/py gen/layout.md
+	rm -rf build gen/cpp gen/py gen/go gen/layout.md
+
+# Regenerate the simulator baselines after an intentional behaviour change (review the diff).
+baselines: build/run_sim build/refdata-20260915-v1.bin
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --write-baseline sim/baselines/random-day.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --write-baseline sim/baselines/adversarial.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/kill --scenario kill --steps 3000 --drill kill --write-baseline sim/baselines/kill.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/session-drop --scenario session-drop --steps 3000 --drill session-drop --write-baseline sim/baselines/session-drop.json
+	python3 sim/scenarios/make_scenario.py build/refdata-20260915-v1.bin build/sim/scripted.log --orders 1500
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/scripted --scenario scripted --events build/sim/scripted.log --write-baseline sim/baselines/scripted.json

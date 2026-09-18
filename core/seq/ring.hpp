@@ -15,9 +15,9 @@ namespace trading::seq {
 
 class BroadcastRing {
 public:
-    static constexpr size_t SLOT = 512;
+    static constexpr size_t SLOT = ((48 + MAX_BLOCK_LENGTH + 63) / 64) * 64;   // largest frame, cache-line rounded
     static constexpr size_t MAX_READERS = 16;
-    static_assert(SLOT >= 48 + 272 + 32, "largest message must fit");
+    static_assert(SLOT >= 48 + MAX_BLOCK_LENGTH, "largest message must fit");
 
     explicit BroadcastRing(size_t capacityPow2)
         : cap_(capacityPow2), mask_(capacityPow2 - 1), slots_(capacityPow2) {

@@ -16,6 +16,7 @@ code,name,family,description
 115,MissingPrice,order,limit or stop order without a price
 116,BadSide,order,side unset
 117,MinQtyExceedsQty,order,minQty greater than qty
+118,DuplicateOrder,order,identical symbol/side/qty/price from the account within the duplicate window
 120,ShortNotShortable,short,symbol not shortable
 121,LocateRequired,short,short sale needs a locate and symbol is not easy to borrow
 122,LocateUnknown,short,locateId not granted

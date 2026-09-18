@@ -1,0 +1,16 @@
+{
+  "scenario": "session-drop",
+  "seed": 7,
+  "steps": 3000,
+  "orders": 2133,
+  "accepted": 2032,
+  "rejected": 101,
+  "fills": 2034,
+  "cancelled": 375,
+  "children": 2032,
+  "checkpoints": 11,
+  "coreSeq": 21251,
+  "mdSeq": 10355,
+  "verified": 6208,
+  "finalHash": "3e65cb134e668d13044a6b74cab84e33cc3e1b015d5894f8c44d459586ca4506"
+}
