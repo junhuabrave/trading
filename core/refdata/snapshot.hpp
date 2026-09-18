@@ -20,6 +20,7 @@ enum class Section : uint16_t {
     CorporateActions = 6, Lists = 7, Fees = 8, Accounts = 9, Components = 10, TickerIndex = 11,
 };
 
+__extension__ typedef unsigned __int128 u128;   // bounds arithmetic that cannot wrap
 inline constexpr size_t PAGE = 4096;
 inline constexpr size_t MAX_SYMBOLS = 65536;
 inline constexpr size_t LIST_BYTES = MAX_SYMBOLS / 8;
@@ -113,7 +114,7 @@ private:
             if (e.offset % PAGE != 0) throw std::runtime_error("snapshot: section not page aligned");
             if (e.offset > size_) throw std::runtime_error("snapshot: section beyond EOF");
             // bounds in wide arithmetic: a corrupt header's recordSize x recordCount can wrap size_t
-            unsigned __int128 wide = (unsigned __int128)e.recordSize * e.recordCount;
+            u128 wide = u128(e.recordSize) * e.recordCount;
             if (wide > size_ - e.offset) throw std::runtime_error("snapshot: section beyond EOF");
             size_t len = size_t(wide);
             uint8_t h[32];

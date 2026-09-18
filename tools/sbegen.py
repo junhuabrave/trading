@@ -454,8 +454,7 @@ def go_put(prim, off, expr):
     if prim in ("uint8", "char"): return f"b[{off}] = byte({expr})"
     if prim == "int8": return f"b[{off}] = byte({expr})"
     w = PRIM[prim][0] * 8
-    cast = f"uint{w}({expr})" if prim.startswith("int") else expr
-    return f"binary.LittleEndian.PutUint{w}(b[{off}:], {cast})"
+    return f"binary.LittleEndian.PutUint{w}(b[{off}:], uint{w}({expr}))"   # always cast: enums and sets are named types
 
 def go_get(prim, off, gotype):
     if prim in ("uint8", "char"): return f"{gotype}(b[{off}])"
