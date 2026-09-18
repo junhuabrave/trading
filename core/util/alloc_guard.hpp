@@ -20,10 +20,13 @@ struct AllocScope {
 }
 
 #ifdef TRADING_COUNT_ALLOCS
-void* operator new(std::size_t n) { trading::util::AllocCounter::news.fetch_add(1, std::memory_order_relaxed); if (void* p = std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
-void* operator new[](std::size_t n) { trading::util::AllocCounter::news.fetch_add(1, std::memory_order_relaxed); if (void* p = std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
-void operator delete(void* p) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
-void operator delete[](void* p) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
+// noinline: GCC otherwise inlines the replacement, sees malloc inside, and reports every
+// sized delete as a mismatched allocation function
+#define TRADING_NOINLINE __attribute__((noinline))
+TRADING_NOINLINE void* operator new(std::size_t n) { trading::util::AllocCounter::news.fetch_add(1, std::memory_order_relaxed); if (void* p = std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
+TRADING_NOINLINE void* operator new[](std::size_t n) { trading::util::AllocCounter::news.fetch_add(1, std::memory_order_relaxed); if (void* p = std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
+TRADING_NOINLINE void operator delete(void* p) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
+TRADING_NOINLINE void operator delete[](void* p) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
+TRADING_NOINLINE void operator delete(void* p, std::size_t) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
+TRADING_NOINLINE void operator delete[](void* p, std::size_t) noexcept { trading::util::AllocCounter::deletes.fetch_add(1, std::memory_order_relaxed); std::free(p); }
 #endif

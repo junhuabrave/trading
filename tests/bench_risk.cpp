@@ -5,12 +5,11 @@
 #include "bench.hpp"
 #include "risk.hpp"
 #include <random>
-#include <memory>
 using namespace trading; using namespace trading::risk; using namespace trading::bench; using trading::util::AllocScope;
 
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
-    Snapshot snap(argv[1]); RefData rd; rd.load(snap); auto eng = std::make_unique<RiskEngine>(rd, 1 << 22, 1 << 17);
+    Snapshot snap(argv[1]); RefData rd; rd.load(snap); RiskEngine engine(rd, 1 << 22, 1 << 17); RiskEngine* eng = &engine;
     Frame<LimitUpdate> l; l.init(); l.body.accountIdx = 500; l.body.maxOrderQty = 10000; l.body.maxOrderNotional = 500'000'000'000'000LL;
     l.body.maxGrossExposure = INT64_MAX / 4; l.body.maxNetExposure = INT64_MAX / 4; l.body.priceCollarBps = 300; l.body.maxOpenOrders = 0; l.body.maxMsgRate = 0; eng->apply(&l.header);
     Frame<BuyingPowerUpdate> b; b.init(); b.body.accountIdx = 500; b.body.buyingPower = INT64_MAX / 4; eng->apply(&b.header);
