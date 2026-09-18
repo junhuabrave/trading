@@ -18,6 +18,13 @@ struct WallClock final : Clock {
     }
 };
 
+// Monotonic clock for benchmarks: deltas are real elapsed time, the epoch is arbitrary.
+struct SteadyClock final : Clock {
+    int64_t nowNs() noexcept override {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+};
+
 // Advances a fixed step per call; fully reproducible.
 struct FakeClock final : Clock {
     int64_t t; int64_t step;

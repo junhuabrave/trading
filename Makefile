@@ -3,12 +3,12 @@ CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra -Werror -pedantic
 B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DBLAKE3_USE_NEON=0
-INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Isim -Ithird_party/blake3
+INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Isim -Ithird_party/blake3
 B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
-.PHONY: all gen check test clean bench fuzz gotest baselines
+.PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/run_sim build/bench build/bench_seq build/bench_risk
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -39,7 +39,13 @@ build/bench_seq: tests/bench_seq.cpp core/seq/*.hpp gen/cpp/trading.hpp | build
 build/test_risk: tests/test_risk.cpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
-build/run_sim: sim/run_sim.cpp sim/*.hpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/run_sim: sim/run_sim.cpp sim/*.hpp core/oms/*.hpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/bench_oms: tests/bench_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/bench_risk: tests/bench_risk.cpp core/risk/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -74,6 +80,9 @@ test: check all build/refdata-diff.log
 	./build/test_seq build/refdata-20260915-v1.bin build/seqtest
 	@echo "== risk: every reject reason, credit maths, replay determinism"
 	./build/test_risk build/refdata-20260915-v1.bin build/risktest
+	@echo "== oms: state table, every lifecycle, replay regenerates every client report"
+	./build/test_oms build/refdata-20260915-v1.bin build/omstest
+	python3 tools/reason_coverage.py build/risktest/risk.jnl build/omstest/oms.log
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
@@ -85,10 +94,16 @@ test: check all build/refdata-diff.log
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/scripted --scenario scripted --events build/sim/scripted.log --baseline sim/baselines/scripted.json
 	@echo "== all tests passed"
 
-bench: build/bench build/bench_seq build/refdata-20260915-v1.bin
-	./build/bench build/refdata-20260915-v1.bin
-	./build/bench_seq build/seqbench
-	./build/bench_risk build/refdata-20260915-v1.bin
+# Benchmarks: every binary prints JSON rows; tools/bench.py collects, compares to
+# bench/baselines/<host-class>.json. `bench` is informational, `benchgate` fails on regression
+# (use on a pinned host), `bench-baseline` records a new baseline after a reviewed change.
+BENCH_BINS = build/bench build/bench_seq build/bench_risk build/bench_oms build/run_sim
+bench: $(BENCH_BINS) build/refdata-20260915-v1.bin
+	python3 tools/bench.py run
+benchgate: $(BENCH_BINS) build/refdata-20260915-v1.bin
+	python3 tools/bench.py run --gate --strace
+bench-baseline: $(BENCH_BINS) build/refdata-20260915-v1.bin
+	python3 tools/bench.py run --write
 
 # libFuzzer targets (clang only): journal recovery and the snapshot loader over corrupt input
 fuzz: build/fuzz_journal build/fuzz_snapshot

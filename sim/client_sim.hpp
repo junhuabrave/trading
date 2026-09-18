@@ -10,7 +10,7 @@ namespace trading::sim {
 
 class ClientSim {
 public:
-    struct Params { uint32_t accountIdx = 42; uint16_t sourceId = 2; uint32_t sessionId = 9; uint32_t symbols = 10; bool adversarial = false; int shortPct = 15; int cancelPct = 30; };
+    struct Params { uint32_t accountIdx = 42; uint16_t sourceId = 2; uint32_t sessionId = 9; uint32_t symbols = 10; bool adversarial = false; int shortPct = 15; int cancelPct = 30; int replacePct = 8; };
     ClientSim(Params p, uint64_t seed) : p_(p), rng_(seed) {}
 
     // Produce one client action for this step. midOf(sym) gives the current mid. emit(frame) sequences it.
@@ -23,6 +23,15 @@ public:
             if (p_.adversarial && rng_() % 20 == 0) c.body.orderId = 0xBAD0000 + (rng_() % 100);      // cancel of an unknown order
             else { live_[k] = live_.back(); live_.pop_back(); }
             emit(&c.header); ++cancels_;
+            return;
+        }
+        if (roll < uint32_t(p_.cancelPct + p_.replacePct) && !live_.empty()) {
+            size_t k = rng_() % live_.size();
+            Frame<ReplaceOrder> r; r.init(); r.header.sourceId = p_.sourceId; r.header.originTs = now;
+            r.body.orderId = live_[k]; r.body.clOrdId = ++clOrd_; r.body.accountIdx = p_.accountIdx; r.body.sessionId = p_.sessionId;
+            r.body.qty = int64_t(100 * (1 + rng_() % 12)); r.body.price = 0;
+            if (rng_() % 3 == 0) { uint32_t s = uint32_t(1 + rng_() % p_.symbols); int64_t mid = midOf(s); r.body.price = mid + (int64_t(rng_() % 5) - 2) * 1'000'000; }
+            emit(&r.header); ++replaces_;
             return;
         }
         uint32_t s = uint32_t(1 + rng_() % p_.symbols);
@@ -48,9 +57,9 @@ public:
     }
     // Rate burst: n orders in one call, for the message-rate check.
     template <class Mid, class F> void burst(uint32_t n, int64_t now, Mid&& midOf, F&& emit) { for (uint32_t i = 0; i < n; ++i) step(now, midOf, emit); }
-    uint64_t orders() const { return orders_; } uint64_t cancels() const { return cancels_; }
+    uint64_t orders() const { return orders_; } uint64_t cancels() const { return cancels_; } uint64_t replaces() const { return replaces_; }
 private:
-    Params p_; std::mt19937_64 rng_; std::vector<uint64_t> live_; uint64_t orders_ = 0, clOrd_ = 0, cancels_ = 0;
+    Params p_; std::mt19937_64 rng_; std::vector<uint64_t> live_; uint64_t orders_ = 0, clOrd_ = 0, cancels_ = 0, replaces_ = 0;
 };
 
 } // namespace trading::sim

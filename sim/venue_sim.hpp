@@ -45,12 +45,11 @@ public:
         if (auto* c = as<ChildOrder>(f)) {
             if (c->venueId != p_.venueId) return;
             if (c->venueSessionIdx >= sessions_.size() || !sessions_[c->venueSessionIdx].up) { rejectChild(*c, 1, now); return; }
-            Arrival a; a.child = *c; a.parentClOrdCause = f->seq;
+            Arrival a; a.child = *c; a.childSeq = f->seq;
             a.arriveTs = (c->releaseTs > now ? c->releaseTs : now) + p_.latencyNs;
             arrivals_.push(a);
         } else if (auto* c = as<CancelOrder>(f)) {
-            // a cancel addressed to a child: orderId is the childOrderId
-            for (auto& a : arrivalsPendingCancel_) (void)a;
+            if (f->sourceId != 4) return;                                   // only the OMS addresses children; orderId is the childOrderId
             cancels_.push_back({c->orderId, now + p_.latencyNs});
         }
     }
@@ -62,15 +61,15 @@ public:
         while (!arrivals_.empty() && arrivals_.top().arriveTs <= now) {
             Arrival a = arrivals_.top(); arrivals_.pop();
             Session& s = sessions_[a.child.venueSessionIdx];
-            if (!s.up) { rejectChild(a.child, 1, now, emit); continue; }
+            if (!s.up) { rejectChild(a.child, 1, now, emit, a.childSeq); continue; }
             if (s.used >= p_.throttlePerSec) {                       // throttled: the port delays, never drops
                 a.arriveTs = s.windowTs + 1'000'000'000LL; ++s.delayed; arrivals_.push(a); continue;
             }
             ++s.used; ++s.received;
-            if (a.child.qty <= 0 || (a.child.ordType == OrdType::Limit && a.child.price <= 0)) { rejectChild(a.child, 2, now, emit); continue; }
-            ack(a.child, now, emit);
+            if (a.child.qty <= 0 || (a.child.ordType == OrdType::Limit && a.child.price <= 0)) { rejectChild(a.child, 2, now, emit, a.childSeq); continue; }
+            ack(a.child, a.childSeq, now, emit);
             ++s.openOrders;
-            match(a.child, s, now, emit);
+            match(a.child, a.childSeq, s, now, emit);
         }
         for (const Trade& t : pendingTrades_) tradeFills(t, now, emit);
         pendingTrades_.clear();
@@ -104,26 +103,26 @@ public:
 
 private:
     struct Session { bool up = true; int64_t windowTs = 0; uint32_t used = 0, openOrders = 0; uint64_t received = 0, delayed = 0; };
-    struct Arrival { ChildOrder child; int64_t arriveTs; uint64_t parentClOrdCause; bool operator>(const Arrival& o) const { return arriveTs > o.arriveTs; } };
+    struct Arrival { ChildOrder child; int64_t arriveTs; uint64_t childSeq; bool operator>(const Arrival& o) const { return arriveTs > o.arriveTs; } };
     struct Rest {
-        uint64_t childId, parentId; uint32_t accountIdx, symbolIdx; Side side; int64_t price, leaves, cum, queueAhead; uint16_t sessionIdx; uint8_t tif;
+        uint64_t childId, parentId; uint32_t accountIdx, symbolIdx; Side side; int64_t price, leaves, cum, queueAhead; uint16_t sessionIdx; uint8_t tif; uint64_t childSeq;
         BookSide bookSide() const { return side == Side::Buy ? BookSide::Bid : BookSide::Ask; }
     };
     struct PendingCancel { uint64_t childId; int64_t dueTs; };
 
-    void ack(const ChildOrder& c, int64_t now, const Emit& emit) {
-        Frame<VenueAck> a; a.init(); a.header.sourceId = p_.sourceId; a.body.childOrderId = c.childOrderId; a.body.venueId = p_.venueId;
+    void ack(const ChildOrder& c, uint64_t childSeq, int64_t now, const Emit& emit) {
+        Frame<VenueAck> a; a.init(); a.header.sourceId = p_.sourceId; a.header.causeSeq = childSeq; a.body.childOrderId = c.childOrderId; a.body.venueId = p_.venueId;
         std::snprintf(a.body.venueOrderId, sizeof a.body.venueOrderId, "SIM%016llx", (unsigned long long)c.childOrderId); a.body.venueTs = now;
         ++acks_; emit(&a.header);
     }
-    void rejectChild(const ChildOrder& c, uint32_t why, int64_t now, const Emit& emit) {
-        Frame<VenueReject> r; r.init(); r.header.sourceId = p_.sourceId; r.body.childOrderId = c.childOrderId; r.body.venueId = p_.venueId;
+    void rejectChild(const ChildOrder& c, uint32_t why, int64_t now, const Emit& emit, uint64_t childSeq = 0) {
+        Frame<VenueReject> r; r.init(); r.header.sourceId = p_.sourceId; r.header.causeSeq = childSeq; r.body.childOrderId = c.childOrderId; r.body.venueId = p_.venueId;
         r.body.reason = uint16_t(why == 1 ? Reason::OrderNotLive : Reason::QtyZero); r.body.venueReason = why; r.body.venueTs = now;
         ++rejects_; emit(&r.header);
     }
     void rejectChild(const ChildOrder& c, uint32_t why, int64_t now) { deferredRejects_.push_back({c, why, now}); }
     void exec(const Rest& r, ExecType type, int64_t qty, int64_t px, int64_t now, const Emit& emit, uint16_t reason = 0) {
-        Frame<ExecReport> e; e.init(); e.header.sourceId = p_.sourceId;
+        Frame<ExecReport> e; e.init(); e.header.sourceId = p_.sourceId; e.header.causeSeq = r.childSeq;
         ExecReport& b = e.body;
         b.orderId = r.parentId; b.childOrderId = r.childId; b.accountIdx = r.accountIdx; b.symbolIdx = r.symbolIdx;
         b.execType = type; b.side = r.side; b.venueId = p_.venueId; b.lastQty = qty; b.lastPx = px;
@@ -144,8 +143,8 @@ private:
         st.body.openOrders = s.openOrders; st.body.queueDepth = uint32_t(arrivals_.size()); st.body.ackLatencyNs = p_.latencyNs; st.body.lastVenueSeq = execCounter_;
         (void)now; emit(&st.header);
     }
-    void match(const ChildOrder& c, Session& s, int64_t now, const Emit& emit) {
-        Rest r{c.childOrderId, c.parentOrderId, c.accountIdx, c.symbolIdx, c.side, c.price, c.qty, 0, 0, c.venueSessionIdx, uint8_t(c.tif)};
+    void match(const ChildOrder& c, uint64_t childSeq, Session& s, int64_t now, const Emit& emit) {
+        Rest r{c.childOrderId, c.parentOrderId, c.accountIdx, c.symbolIdx, c.side, c.price, c.qty, 0, 0, c.venueSessionIdx, uint8_t(c.tif), childSeq};
         bool buy = c.side == Side::Buy;
         auto& opp = buy ? book_.asks(c.symbolIdx) : book_.bids(c.symbolIdx);
         auto crosses = [&](int64_t lvl) { return c.ordType == OrdType::Market || (buy ? c.price >= lvl : c.price <= lvl); };
@@ -214,7 +213,6 @@ private:
     BookLite book_;
     std::vector<Session> sessions_;
     std::priority_queue<Arrival, std::vector<Arrival>, std::greater<Arrival>> arrivals_;
-    std::vector<Arrival> arrivalsPendingCancel_;
     std::vector<Rest> resting_;
     std::vector<Trade> pendingTrades_;
     std::vector<PendingCancel> cancels_;

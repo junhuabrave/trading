@@ -162,6 +162,9 @@ int main(int argc, char** argv) {
     { Frame<KillSwitch> k; k.init(); h.send(k, 13); }
     CHECK(h.order(h.mk(7, AAPL, Side::Buy, 100, ap)) == Reason::FirmKilled);
     { Frame<KillSwitch> k; k.init(); k.body.release = 1; h.send(k, 13); k.body.accountIdx = 42; h.send(k, 13); }   // lift both
+    { Frame<KillSwitch> k; k.init(); k.body.strategyId = 5; h.send(k, 13); }
+    { NewOrder o = h.mk(42, AAPL, Side::Buy, 100, ap); o.strategyId = 5; CHECK(h.order(o) == Reason::StrategyKilled); }
+    { Frame<KillSwitch> k; k.init(); k.body.strategyId = 5; k.body.release = 1; h.send(k, 13); }
     CHECK(h.order(h.mk(7, AAPL, Side::Buy, 100, ap), &oid) == Reason::NoReason); h.cancel(oid);
     // ---- duplicate-order window (v3): identical symbol/side/qty/price within 100 ms
     h.buyingPower(8, 1'000'000 * USD); h.limits(8, 0, 0, 0, 0, 0, 0, 0, 0, 100);

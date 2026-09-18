@@ -1,21 +1,18 @@
-// Rough single-core numbers for the two things the hot path does with this code:
-// decode a frame and dispatch on template id; reference-data lookups; applying a ListUpdate.
+// Component benchmarks for the reference-data path: decode + dispatch + hot lookups, applying a
+// ListUpdate, and the checkpoint hash. Emits one JSON line per benchmark for tools/bench.py.
+#define TRADING_COUNT_ALLOCS
+#include "alloc_guard.hpp"
+#include "bench.hpp"
 #include "refdata.hpp"
-#include <chrono>
-#include <cstdio>
 #include <vector>
 #include <random>
 
-using namespace trading;
-using namespace trading::refdata;
-using clk = std::chrono::steady_clock;
+using namespace trading; using namespace trading::refdata; using namespace trading::bench; using trading::util::AllocScope;
 
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
     Snapshot snap(argv[1]); RefData rd; rd.load(snap);
-
-    // 1M NewOrder frames in a contiguous buffer
-    const size_t N = 1'000'000;
+    const size_t N = 1'000'000, B = 32;
     std::vector<Frame<NewOrder>> frames(N);
     std::mt19937_64 rng(1);
     for (size_t i = 0; i < N; ++i) {
@@ -24,38 +21,26 @@ int main(int argc, char** argv) {
         frames[i].body.side = (rng() & 1) ? Side::Buy : Side::SellShort;
         frames[i].body.qty = int64_t(100 + rng() % 900); frames[i].body.price = int64_t(1'000'000'000 + rng() % 50'000'000'000LL);
     }
-    // decode + a risk-style check: tradable, shortable if short, ETB or locate, price collar vs refPrice
-    uint64_t accepted = 0;
-    auto t0 = clk::now();
-    for (size_t i = 0; i < N; ++i) {
-        const FrameHeader* h = &frames[i].header;
+    auto check = [&](size_t i) {
+        const FrameHeader* h = &frames[i].header; bool ok = false;
         if (const NewOrder* o = as<NewOrder>(h)) {
-            uint32_t s = o->symbolIdx;
-            bool ok = rd.tradable(s);
+            uint32_t s = o->symbolIdx; ok = rd.tradable(s);
             if (o->side == Side::SellShort) ok = ok && rd.shortable(s) && (rd.easyToBorrow(s) || o->locateId != 0);
-            int64_t ref = rd.refPrice(s);
-            ok = ok && o->price > ref / 2 && o->price < ref * 2;
-            ok = ok && (o->qty % rd.lotSize(s) == 0);
-            accepted += ok;
+            int64_t ref = rd.refPrice(s); ok = ok && o->price > ref / 2 && o->price < ref * 2; ok = ok && (o->qty % rd.lotSize(s) == 0);
         }
-    }
-    auto t1 = clk::now();
-    double ns = double(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()) / N;
-    std::printf("decode+dispatch+5 refdata checks: %.1f ns/order (%llu accepted)\n", ns, (unsigned long long)accepted);
-
-    // apply 1M ListUpdate messages
+        return ok;
+    };
+    uint64_t accepted = 0;
+    for (size_t i = 0; i < N / 10; ++i) accepted += check(i);                              // warm-up
+    { Recorder r(B, N / B); AllocScope a;
+      for (size_t i = 0; i + B <= N; i += B) { r.begin(); for (size_t k = 0; k < B; ++k) accepted += check(i + k); r.end(); }
+      uint64_t al = a.delta(); report("refdata.decode_dispatch_checks", r.finish(), al, "decode + dispatch + 5 reference-data checks per order"); }
     Frame<ListUpdate> lu; lu.init(); lu.body.listId = ListId::EasyToBorrow;
-    t0 = clk::now();
-    for (size_t i = 0; i < N; ++i) {
-        lu.body.symbolIdx = uint32_t(1 + i % 10); lu.body.op = (i & 1) ? ListOp::Add : ListOp::Remove;
-        rd.apply(&lu.header);
-    }
-    t1 = clk::now();
-    ns = double(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()) / N;
-    std::printf("apply ListUpdate:                 %.1f ns/message\n", ns);
-
-    t0 = clk::now(); auto sh = rd.stateHash(); t1 = clk::now();
-    std::printf("stateHash over hot arrays:        %.1f us (checkpoint cost) %02x%02x..\n",
-        double(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()) / 1000.0, sh[0], sh[1]);
+    { Recorder r(B, N / B); AllocScope a;
+      for (size_t i = 0; i + B <= N; i += B) { r.begin(); for (size_t k = 0; k < B; ++k) { lu.body.symbolIdx = uint32_t(1 + (i + k) % 10); lu.body.op = ((i + k) & 1) ? ListOp::Add : ListOp::Remove; rd.apply(&lu.header); } r.end(); }
+      uint64_t al = a.delta(); report("refdata.apply_list_update", r.finish(), al); }
+    { std::vector<double> v; AllocScope a; for (int i = 0; i < 50; ++i) { int64_t t0 = nowNs(); auto sh = rd.stateHash(); int64_t t1 = nowNs(); v.push_back(double(t1 - t0)); (void)sh; }
+      uint64_t al = a.delta(); report("refdata.state_hash", percentiles(v), al, "checkpoint cost, whole hot arrays"); }
+    std::fprintf(stderr, "accepted %llu\n", (unsigned long long)accepted);
     return 0;
 }

@@ -32,3 +32,4 @@ code,name,family,description
 140,DuplicateClOrdId,session,clOrdId already used on this session
 141,UnknownOrder,session,cancel or replace for an order we do not know
 142,OrderNotLive,session,order is not in a live state
+150,RerouteRequired,order,parent has leaves and no live child; the router must plan again

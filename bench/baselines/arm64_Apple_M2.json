@@ -1,0 +1,204 @@
+{
+ "hostClass": "arm64/Apple M2",
+ "commit": "ef24d9f",
+ "pinned": false,
+ "when": "2026-09-18T19:05:00Z",
+ "rows": [
+  {
+   "bench": "refdata.decode_dispatch_checks",
+   "unit": "ns/op",
+   "p50": 10.4,
+   "p99": 87.2,
+   "p999": 332.0,
+   "max": 4860.7,
+   "mean": 21.7,
+   "samples": 31250,
+   "allocs": 0,
+   "note": "decode + dispatch + 5 reference-data checks per order"
+  },
+  {
+   "bench": "refdata.apply_list_update",
+   "unit": "ns/op",
+   "p50": 2.6,
+   "p99": 3.9,
+   "p999": 6.5,
+   "max": 162.8,
+   "mean": 2.9,
+   "samples": 31250,
+   "allocs": 0,
+   "note": ""
+  },
+  {
+   "bench": "refdata.state_hash",
+   "unit": "ns/op",
+   "p50": 136500.0,
+   "p99": 390083.0,
+   "p999": 390083.0,
+   "max": 399042.0,
+   "mean": 155699.2,
+   "samples": 50,
+   "allocs": 7,
+   "note": "checkpoint cost, whole hot arrays"
+  },
+  {
+   "bench": "seq.stamp_journal_publish",
+   "unit": "ns/op",
+   "p50": 184.9,
+   "p99": 1243.5,
+   "p999": 12582.0,
+   "max": 691592.4,
+   "mean": 393.4,
+   "samples": 125000,
+   "allocs": 0,
+   "note": "one frame: stamp, buffered journal write, ring publish; reader drained in the same thread"
+  },
+  {
+   "bench": "seq.frames_per_second",
+   "unit": "ops/s",
+   "value": 2504982,
+   "allocs": 0,
+   "note": ""
+  },
+  {
+   "bench": "seq.fsync_whole_journal",
+   "unit": "ms",
+   "value": 9.0,
+   "allocs": 0,
+   "note": "774 MB"
+  },
+  {
+   "bench": "seq.journal_replay",
+   "unit": "ns/op",
+   "p50": 135.9,
+   "p99": 135.9,
+   "p999": 135.9,
+   "max": 135.9,
+   "mean": 135.9,
+   "samples": 1,
+   "allocs": 0,
+   "note": "mean per frame over the whole journal, one sample (replay opens a file handle per segment)"
+  },
+  {
+   "bench": "ring.handoff_cross_thread",
+   "unit": "ns/op",
+   "p50": 83.0,
+   "p99": 54750.0,
+   "p999": 752083.0,
+   "max": 855625.0,
+   "mean": 3709.8,
+   "samples": 1000000,
+   "allocs": 0,
+   "note": "writer thread to reader thread, unpinned"
+  },
+  {
+   "bench": "risk.evaluate_with_cancel",
+   "unit": "ns/op",
+   "p50": 145.8,
+   "p99": 460.9,
+   "p999": 1695.3,
+   "max": 22112.0,
+   "mean": 161.9,
+   "samples": 56250,
+   "allocs": 0,
+   "note": "full check list, accept path, then cancel of 63 in 64; ~28356 open at end"
+  },
+  {
+   "bench": "oms.transition",
+   "unit": "ns/op",
+   "p50": 19.8,
+   "p99": 128.1,
+   "p999": 527.1,
+   "max": 7353.1,
+   "mean": 26.6,
+   "samples": 45000,
+   "allocs": 0,
+   "note": "per sequenced frame over order, decision, child, ack, fill; 1600000 reports emitted"
+  },
+  {
+   "bench": "f2b.ingress_origin_to_seq",
+   "unit": "ns/op",
+   "p50": 625.0,
+   "p99": 13000.0,
+   "p999": 109208.0,
+   "max": 12886083.0,
+   "mean": 2825.9,
+   "samples": 12431,
+   "allocs": 0,
+   "note": "harness single thread, includes the harness loop between stages"
+  },
+  {
+   "bench": "f2b.risk_order_to_decision",
+   "unit": "ns/op",
+   "p50": 1291.0,
+   "p99": 32000.0,
+   "p999": 9815042.0,
+   "max": 22673625.0,
+   "mean": 26918.5,
+   "samples": 12431,
+   "allocs": 0,
+   "note": "harness single thread, includes the harness loop between stages"
+  },
+  {
+   "bench": "f2b.route_decision_to_child",
+   "unit": "ns/op",
+   "p50": 7584.0,
+   "p99": 133083.0,
+   "p999": 17547917.0,
+   "max": 24759000.0,
+   "mean": 87521.4,
+   "samples": 1878,
+   "allocs": 0,
+   "note": "harness single thread, includes the harness loop between stages"
+  },
+  {
+   "bench": "f2b.venue_child_to_ack",
+   "unit": "ns/op",
+   "p50": 21250.0,
+   "p99": 14867625.0,
+   "p999": 24064292.0,
+   "max": 24766666.0,
+   "mean": 297563.0,
+   "samples": 1878,
+   "allocs": 0,
+   "note": "harness single thread, includes the harness loop between stages"
+  },
+  {
+   "bench": "f2b.oms_venue_exec_to_client_report",
+   "unit": "ns/op",
+   "p50": 5834.0,
+   "p99": 243625.0,
+   "p999": 17546292.0,
+   "max": 18484958.0,
+   "mean": 80045.3,
+   "samples": 2346,
+   "allocs": 0,
+   "note": "harness single thread, includes the harness loop between stages"
+  },
+  {
+   "bench": "f2b.order_origin_to_child_sequenced",
+   "unit": "ns/op",
+   "p50": 15417.0,
+   "p99": 938334.0,
+   "p999": 20387250.0,
+   "max": 24763000.0,
+   "mean": 165944.8,
+   "samples": 1852,
+   "allocs": 0,
+   "note": "harness single thread, includes the harness loop between stages"
+  },
+  {
+   "bench": "f2b.max_engine_ring_lag",
+   "unit": "frames",
+   "value": 33.0,
+   "allocs": 0,
+   "note": "engine reader behind the sequencer at its worst; ring is 16384"
+  },
+  {
+   "bench": "f2b.orders",
+   "unit": "count",
+   "value": 12431.0,
+   "allocs": 0,
+   "note": ""
+  }
+ ]
+}

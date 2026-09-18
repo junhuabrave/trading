@@ -184,6 +184,8 @@ private:
     };
     struct Locate { uint32_t accountIdx, symbolIdx; int64_t remaining, expiryTs; };
 
+    static_assert(sizeof(OpenOrder) <= 64, "an open order must fit one cache line");
+    static_assert(sizeof(Locate) <= 32);
     static uint64_t key(uint32_t a, uint32_t s) noexcept { return (uint64_t(a) << 32) | s; }
     static uint64_t clKey(const NewOrder& o) noexcept { return util::FlatSet64::fingerprint(Key128{(uint64_t(o.accountIdx) << 32) | o.sessionId, o.clOrdId}); }
     uint16_t primaryVenue(uint32_t) const noexcept { return 0; }   // SymbolStatus with venueId 0 is the consolidated status

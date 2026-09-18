@@ -49,6 +49,7 @@ public:
         namespace fs = std::filesystem;
         if (fs::exists(dir_) && !fs::is_directory(dir_)) throw std::runtime_error("journal: not a directory: " + dir_);
         fs::create_directories(dir_);
+        index_.reserve(1 << 16); segs_.reserve(256);          // no allocation on the append path for 64M frames / 256 segments
         std::vector<fs::path> files;
         for (const auto& e : fs::directory_iterator(dir_))
             if (e.is_regular_file() && e.path().extension() == ".jnl") files.push_back(e.path());

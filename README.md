@@ -1,15 +1,19 @@
 # Trading stack
 
-**Status: v0.2.0, pre-alpha infrastructure.** Schema (v3), codecs in C++, Python and Go, snapshot
-tooling, a segmented sequencer core, the pre-trade risk engine, and a simulator harness that runs a
-synthetic day from client order to simulated venue and back and proves it replays bit for bit. Not a
-trading system yet: no OMS, router, venue gateways or market-data handlers; the harness uses explicit
-stand-ins for them. The design documents are in `docs/`; document 3 is the gap analysis and the plan.
+**Status: v0.3 in progress, pre-alpha infrastructure.** Schema (v3), codecs in C++, Python and Go,
+snapshot tooling, a segmented sequencer core, the pre-trade risk engine, the order manager, a
+benchmark harness with regression gates, and a simulator harness that runs a synthetic day from
+client order through risk, OMS, a stub router and a simulated venue and back, and proves it replays
+bit for bit including every client report. Not a trading system yet: no router, venue gateways or
+market-data handlers; the harness uses explicit stand-ins for them. The design documents are in
+`docs/`; document 3 is the gap analysis and the plan.
 
 Everything here is exercised by one command:
 
     make test      # generate codecs, check schema, build C++, run all round-trip, determinism and simulator tests
-    make bench     # rough single-core numbers for decode/dispatch, sequencer, risk
+    make bench     # every benchmark, JSON rows, compared to bench/baselines/<host-class>.json (informational)
+    make benchgate # the same, failing on regression (p50 +5 %, throughput -5 %, allocations, syscalls on Linux)
+    make bench-baseline  # record this host's baseline after a reviewed change (--pinned on a quiet host gates p99.9 too)
     make fuzz      # libFuzzer over journal recovery and the snapshot loader (clang)
     make gotest    # Go codec round trip (needs a Go toolchain)
     make baselines # regenerate simulator baselines after an intentional behaviour change
@@ -38,9 +42,12 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 | `tests/test_seq.cpp` | A live engine consumes a core stream and a market-data stream in random interleaving, making 20k risk verdicts and 17.7k routing decisions that depend on the book it saw. A cold consumer replays the core journal only, pulling market data to each watermark, and recomputes every decision exactly. Checkpoint hashes agree across live, late-start (journal refill) and cold. Also: batch adjacency, torn-tail recovery, back-pressure. |
 | `schema/reasons.csv` | Reject and decision reason codes, generated into both codecs as `Reason`. |
 | `schema/versions/` | Frozen copies of each released schema version; `make check` verifies the current schema is a compatible evolution of the previous one. |
+| `core/oms/oms.hpp` | The order manager. Arena of 256-byte order slots (parents and children), open-addressing tables by id and by (account, session, clOrdId), the parent state machine as a data table (illegal transitions counted, never guessed), fee table from the snapshot plus `FeeScheduleUpdate`, NBBO on every client report. Accept, child ack and reject, partial fills and fills aggregated to the parent, cancel (by id or original clOrdId) and cancel reject, replace accepted (children cancelled and re-planned) and rejected, re-route via `OrderState` reason `RerouteRequired` with a budget, IOC, kill switch, bust. A cancel or replace on a parent whose router answer has not arrived waits for it: a child already on its way is never orphaned. No allocation after construction. |
+| `tests/test_oms.cpp` | Table invariants, every lifecycle on purpose, arena exhaustion, illegal events, then 20k random events and a replay that regenerates every client report byte for byte with the same state hash. |
 | `core/risk/risk.hpp` | Pre-trade risk engine. Deterministic state machine over the core stream: limit precedence (account+symbol > account > firm), kill switches (firm/account/strategy, with release), per-account message rate as a sliding one-second window on sequencer time, duplicate-order window (same symbol/side/qty/price), symbol status/halt/restricted, qty/notional/collar/tick checks, short-sale rules (shortable, ETB-or-locate with locate consumption and return on cancel, Rule 201 price test), open-order cap, gross/net exposure, buying power with margin classes; `evaluateReplace` re-checks the order as it would be after a replace; accounts from the snapshot and `PositionSnapshot`/`ExposureSnapshot` at start of session; fills move open notional into position. Wide arithmetic on notional, requirement and exposure sums with hard ceilings. |
 | `tests/test_risk.cpp` | All 29 reject reasons exercised on purpose with the exact expected reason; locate, replace and buying-power accounting checked to the unit; then 200k random orders and 40k replaces, and a cold engine that replays the journal and must reproduce every verdict, reason and buying-power figure, plus the final state hash. |
-| `sim/` | The simulator harness. `venue_sim.hpp` (level book, several sessions with throttles and cancel-on-disconnect, price-time matching, queue-position fills, drop copy), `feed_sim.hpp`, `client_sim.hpp` (random and adversarial flow), `oms_lite.hpp` and `stub_router.hpp` (explicit stand-ins for `core/oms` and `core/router`), `harness.hpp` (wires the streams, drives the day, then replays the core journal cold and recomputes every decision, plan and checkpoint hash), `run_sim.cpp` (scenarios, drills, baselines), `scenarios/make_scenario.py` (a scenario is a log of external events). Baselines in `sim/baselines/`. |
+| `sim/` | The simulator harness. `venue_sim.hpp` (level book, several sessions with throttles and cancel-on-disconnect, price-time matching, queue-position fills, drop copy), `feed_sim.hpp`, `client_sim.hpp` (random and adversarial flow with cancels and replaces), `stub_router.hpp` (explicit stand-in for `core/router`), `harness.hpp` (wires the streams, drives the day with the real risk engine and OMS, then replays the core journal cold and recomputes every decision, plan, placement, checkpoint hash and every OMS frame byte for byte), `run_sim.cpp` (scenarios, drills, baselines, `--bench` for front-to-back stage latencies), `scenarios/make_scenario.py` (a scenario is a log of external events). Baselines in `sim/baselines/`. |
+| `core/util/bench.hpp`, `alloc_guard.hpp` | Block-timed recorder with percentiles and JSON rows; a counting allocator so benchmarks assert zero allocations after warm-up. `tools/bench.py` runs the suite, compares to the host-class baseline, and on Linux checks the order path makes no syscalls under strace. |
 | `tests/fuzz/` | libFuzzer targets for journal recovery and the snapshot loader. |
 | `tests/go/` | Go codec round trip against the C++ log. |
 | `tests/test_codec.cpp`, `tests/test_codec.py` | Cross-language round trip. C++ writes a five-frame log, Python decodes it and walks the `causeSeq` chain; Python writes the same log, C++ decodes it; the two files are byte-identical. |
@@ -61,13 +68,26 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 
 The schema is written in SBE's XML dialect so the official `sbe-tool` can generate codecs for Java, Go, Rust and C# when needed. This repository ships its own generator for the subset we use (fixed-length messages, no groups or var-data) because it lets us enforce the explicit-offset rules above at generation time, and because the official jar is distributed via Maven Central, which the build environment used to produce this increment could not reach. The two are interchangeable for the wire format; ours is stricter.
 
+## Benchmarks and guardrails
+
+Three levels, as document 3 specifies. Component benchmarks (`bench`, `bench_seq`, `bench_risk`,
+`bench_oms`) time blocks of operations and report p50, p99, p99.9 and max as JSON rows, and fail
+if the measured path allocates. Front to back, `run_sim --bench` runs the day on a real clock and
+derives every stage's latency from the journal alone: `originTs` to `seqTs` for ingress, then each
+`causeSeq` hop (order to decision, decision to child, child to venue ack, venue fill to client
+report). End to end wire-to-wire waits for the gateways. `tools/bench.py` compares every row with
+`bench/baselines/<host-class>.json`: p50 may grow 5 %, throughput may fall 5 %, allocations may not
+grow, and p99.9 is gated only when the baseline was recorded with `--pinned` on a quiet host,
+because on a laptop it is scheduler noise. Baselines move only by a reviewed commit.
+
 ## The simulator
 
 `run_sim` runs a scenario (random flow with a seed, adversarial flow, or a scripted event log made by
-`sim/scenarios/make_scenario.py`) through one core stream and one market-data stream: client orders
-and cancels go through the risk engine, a stub router places one child per accepted order on the
-least loaded venue session, the venue simulator acks, fills or rests it, the OMS stand-in aggregates
-venue-level reports into client-level ones, and the risk engine books the fills. The sequencer
+`sim/scenarios/make_scenario.py`) through one core stream and one market-data stream: client orders,
+cancels and replaces go through the risk engine, the OMS owns the parent, a stub router places one
+child per accepted order (and per re-route request) on the least loaded venue session, the venue
+simulator acks, fills or rests it, the OMS aggregates venue-level reports into client-level ones
+with fees and the NBBO, and the risk engine books the fills. The sequencer
 checkpoints periodically and the engine answers each `Checkpoint` with a `CheckpointAck` carrying its
 state hash. Then the journal is replayed cold: market data is pulled to each `MdWatermark`, every
 risk verdict, routing plan and session placement is recomputed and compared to what was sequenced,
@@ -86,6 +106,7 @@ reviewed change.
     journal replay:                                   ~54 ns per frame
     risk evaluate, full check list, accept path:      ~42 ns per order; ~136 ns with the cancel/close path
                                                       (the day-long duplicate-clOrdId set costs one cache miss per order)
+    oms transition (order, decision, child, ack, fill): ~18 ns per sequenced frame, zero allocations
     ring hand-off across threads:                     not measurable on one core; needs a pinned two-core host
 
 ## Schema evolution in practice
@@ -110,7 +131,6 @@ The design puts transport and archive on Aeron. `BroadcastRing` and `Journal` ha
 
 ## Next (v0.3, see docs/03)
 
-1. `core/oms`: the real parent/child state machine, replacing `sim/oms_lite.hpp`: cancel/replace, fee model over `FeeRecord`, `OrderState` emission, NBBO on every client report.
-2. `core/md`: line receiver, line arbitrator, decoders (ITCH, SIP), source selector, book builder; per-feed journals keyed by venue sequence.
-3. `core/router`: the strategy library over the book view and `VenueScorecard`, replacing `sim/stub_router.hpp`.
-4. Benchmark harness with stored baselines and regression gates.
+1. `core/md`: line receiver, line arbitrator, decoders (ITCH, SIP), source selector, book builder; per-feed journals keyed by venue sequence.
+2. `core/router`: the strategy library over the book view and `VenueScorecard`, replacing `sim/stub_router.hpp`.
+3. OMS: Day expiry through sequenced timers, GTC carry, venue-side replace once a venue protocol supports it.

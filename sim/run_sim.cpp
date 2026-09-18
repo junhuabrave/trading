@@ -5,6 +5,7 @@
 //           [--drill kill|session-drop|rate-burst|torn-tail] [--events FILE]
 //           [--baseline FILE] [--write-baseline FILE]
 #include "harness.hpp"
+#include "bench.hpp"
 #include <cstring>
 #include <fstream>
 #include <regex>
@@ -37,9 +38,18 @@ int main(int argc, char** argv) {
         else if (a == "--adversarial") c.adversarial = true; else if (a == "--drill") c.drill = next(); else if (a == "--events") c.eventsFile = next();
         else if (a == "--baseline") baseline = next(); else if (a == "--write-baseline") writeBaseline = next();
         else if (a == "--sessions") c.sessions = uint32_t(std::stoul(next())); else if (a == "--throttle") c.throttlePerSec = uint32_t(std::stoul(next()));
+        else if (a == "--bench") c.benchMode = true;
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     Harness h(c);
+    if (c.benchMode) {
+        // front to back: real clock, no drills, no replay; stage latencies from the journal, JSON for tools/bench.py
+        Stats s = h.runLive();
+        for (auto& st : h.stageLatencies()) trading::bench::report(st.name, trading::bench::percentiles(st.ns), 0, "harness single thread, includes the harness loop between stages");
+        trading::bench::reportValue("f2b.max_engine_ring_lag", "frames", double(s.maxRingLag), "engine reader behind the sequencer at its worst; ring is 16384");
+        trading::bench::reportValue("f2b.orders", "count", double(s.orders));
+        return s.maxRingLag > 16384 / 4 ? 1 : 0;
+    }
     Stats s = h.runLive();
     std::printf("live [%s%s]: core seq=%llu md seq=%llu orders=%llu accepted=%llu rejected=%llu fills=%llu cancelled=%llu venueRejects=%llu children=%llu checkpoints=%llu delayed=%llu\n",
         scenario.c_str(), c.drill.empty() ? "" : (" drill=" + c.drill).c_str(), (unsigned long long)s.coreSeq, (unsigned long long)s.mdSeq,

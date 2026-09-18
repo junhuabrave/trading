@@ -8,8 +8,8 @@
 #include "reader.hpp"
 #include "watermark.hpp"
 #include "risk.hpp"
+#include "oms.hpp"
 #include "venue_sim.hpp"
-#include "oms_lite.hpp"
 #include "stub_router.hpp"
 #include "feed_sim.hpp"
 #include "client_sim.hpp"
@@ -31,12 +31,14 @@ struct Config {
     std::string snapshot, workdir, eventsFile, drill;
     uint64_t seed = 7; uint32_t steps = 5000; uint32_t checkpointEvery = 2000; uint32_t sessions = 3; uint32_t throttlePerSec = 2000;
     bool adversarial = false; uint64_t segmentBytes = 4 << 20;
+    bool benchMode = false;          // steady clock instead of the fake one: seqTs deltas are real elapsed time
 };
 
 struct Stats {
     uint64_t orders = 0, accepted = 0, rejected = 0, fills = 0, cancelled = 0, venueRejects = 0, children = 0, checkpoints = 0, coreSeq = 0, mdSeq = 0, dropCopyFills = 0, delayed = 0;
     std::array<uint64_t, 16> placed{};
     std::array<uint8_t, 32> finalHash{};
+    uint64_t maxRingLag = 0;
 };
 
 inline std::string hex(const std::array<uint8_t, 32>& h, size_t n = 32) { std::string s; char b[3]; for (size_t i = 0; i < n; ++i) { std::snprintf(b, 3, "%02x", h[i]); s += b; } return s; }
@@ -46,8 +48,8 @@ class Engine {
 public:
     enum class Mode { Live, Verify };
     Engine(const Snapshot& snap, uint32_t sessions, Mode mode, const Journal* mdJournal = nullptr, uint16_t sourceId = 3)
-        : mode_(mode), src_(sourceId), risk_(rd_), oms_(4), router_(2, sessions), book_(snap.instruments().size() + 1), mdJournal_(mdJournal) {
-        rd_.load(snap); risk_.load(snap); std::memcpy(snapHash_.data(), snap.contentHash().data(), 32);
+        : mode_(mode), src_(sourceId), risk_(rd_), oms_(4, 1 << 18), router_(2, sessions), book_(snap.instruments().size() + 1), mdJournal_(mdJournal) {
+        rd_.load(snap); risk_.load(snap); oms_.load(snap); std::memcpy(snapHash_.data(), snap.contentHash().data(), 32);
     }
 
     // Verify mode: md target per cause seq, pre-scanned from the journal, so a decision is
@@ -57,6 +59,7 @@ public:
     // ----- inputs
     void onMd(const FrameHeader* f) {
         if (auto* d = as<BookDelta>(f)) book_.apply(*d);
+        else if (auto* n = as<Nbbo>(f)) oms_.onNbbo(*n);   // the NBBO on every client report
         risk_.apply(f);                                     // Trade and Nbbo feed reference prices and the SSR bid
         wm_.observe(f->streamId, f->seq); mdPos_ = f->seq;
     }
@@ -65,17 +68,31 @@ public:
         if (as<Checkpoint>(f)) { onCheckpoint(f); return; }
         if (auto* ack = as<CheckpointAck>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) verifyAck(*ack); return; }
         if (auto* w = as<MdWatermark>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) pullMd(*w); return; }
-        // the OMS stand-in and the router see everything (they only react to what concerns them)
-        oms_.apply(f, [&](FrameHeader* out) { emit(out, f->seq); });
+        // the OMS's own frames come back on the stream: in Verify they must equal what this OMS produced
+        if (mode_ == Mode::Verify && f->sourceId == 4) verifyOmsFrame(f);
+        if (mode_ == Mode::Verify) pullTo(f->seq);         // market data to where the live engine was when it handled this frame
+        // the OMS and the router see everything (they only react to what concerns them). Live: the OMS's
+        // outputs for a frame go out as one batch behind a watermark, so replay can regenerate the NBBO on them
+        if (mode_ == Mode::Live) {
+            size_t before = pending_.size(); bool first = true;
+            oms_.apply(f, [&](FrameHeader* out) { if (first) { emitWatermarks(f->seq); first = false; } emit(out, f->seq, false); });
+            (void)before;
+        } else oms_.apply(f, [&](FrameHeader* out) { const auto* p = reinterpret_cast<const std::byte*>(out); omsExpected_.emplace_back(p, p + out->frameLength); });
         router_.apply(f);
         risk_.apply(f);
         if (auto* o = as<NewOrder>(f)) { lastOrder_ = *o; lastHdr_ = *f; lastIsReplace_ = false; if (mode_ == Mode::Live) decideLive(f); else decideVerify(f); return; }
         if (auto* r = as<ReplaceOrder>(f)) { lastReplace_ = *r; lastHdr_ = *f; lastIsReplace_ = true; if (mode_ == Mode::Live) decideLive(f); else decideVerify(f); return; }
         if (auto* d = as<RiskDecision>(f)) {
             if (f->sourceId != src_) return;
-            bool replace = false;
-            if (mode_ == Mode::Verify) replace = verifyDecision(f, *d); else replace = lastIsReplace_;
-            if (d->verdict == RiskVerdict::Accept && !replace) { if (mode_ == Mode::Live) routeLive(f, *d); else routeVerify(f, *d); }
+            // whether this decision answers a replace is on the decision itself (the risk engine sets the
+            // Replace check bit); the last order frame read is stale after a burst
+            bool replace = (d->checkMask & Check::Replace) != 0;
+            if (mode_ == Mode::Verify) verifyDecision(f, *d);
+            if (d->verdict == RiskVerdict::Accept && !replace) { if (mode_ == Mode::Live) routeLive(f, d->orderId); else routeVerify(f, d->orderId); }
+            return;
+        }
+        if (auto* st = as<OrderState>(f)) {                // the OMS asks for a plan when a parent has leaves and no live child
+            if (f->sourceId == 4 && st->reason == uint16_t(Reason::RerouteRequired)) { if (mode_ == Mode::Live) routeLive(f, st->orderId); else routeVerify(f, st->orderId); }
             return;
         }
         if (auto* rt = as<RouteDecision>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) verifyRoute(f, *rt); return; }
@@ -93,7 +110,7 @@ public:
         oms_.hashInto(h); router_.hashInto(h);
         std::array<uint8_t, 32> out{}; blake3_hasher_finalize(&h, out.data(), 32); return out;
     }
-    const RiskEngine& risk() const { return risk_; } const OmsLite& oms() const { return oms_; } const StubRouter& router() const { return router_; }
+    const RiskEngine& risk() const { return risk_; } const oms::Oms& oms() const { return oms_; } const StubRouter& router() const { return router_; }
     uint64_t checkpoints() const { return checkpoints_; }
     uint64_t verified() const { return verified_; } uint64_t mismatches() const { return mismatches_; }
     const std::string& firstMismatch() const { return firstMismatch_; }
@@ -117,14 +134,20 @@ private:
         if (lastIsReplace_) risk_.evaluateReplace(f, lastReplace_, d.body); else risk_.evaluate(f, lastOrder_, d.body);
         emitWatermarks(f->seq); emit(&d.header, f->seq, false);          // [watermark(s), decision] is one batch
     }
-    void routeLive(const FrameHeader* f, const RiskDecision& d) {
-        const NewOrder* o = oms_.parent(d.orderId); if (!o) return;
-        StubRouter::Plan p = router_.plan(*o, book_); router_.placed(p);
+    // The router's view of a parent: what is left to route, at the current price.
+    static bool routeInput(const oms::Order* o, NewOrder& n) {
+        if (!o || o->leaves <= 0) return false;
+        n = NewOrder{}; n.orderId = o->orderId; n.clOrdId = o->clOrdId; n.accountIdx = o->accountIdx; n.symbolIdx = o->symbolIdx; n.side = o->side;
+        n.ordType = o->ordType; n.tif = o->tif; n.orderFlags = o->orderFlags; n.qty = o->leaves; n.price = o->price; n.displayQty = o->displayQty; return true;
+    }
+    void routeLive(const FrameHeader* f, uint64_t orderId) {
+        NewOrder o; if (!routeInput(oms_.find(orderId), o)) return;
+        StubRouter::Plan p = router_.plan(o, book_); router_.placed(p);
         Frame<RouteDecision> rt; rt.init(); rt.header.sourceId = src_;
-        rt.body.parentOrderId = o->orderId; rt.body.strategyTag = 1; rt.body.childCount = 1; rt.body.venueIds[0] = p.venueId; rt.body.qtys[0] = o->qty;
+        rt.body.parentOrderId = o.orderId; rt.body.strategyTag = 1; rt.body.childCount = 1; rt.body.venueIds[0] = p.venueId; rt.body.qtys[0] = o.qty;
         rt.body.expectedCost = p.expectedCost; rt.body.rejectedAltVenue = 0; rt.body.rejectedAltCost = 0;
         Frame<ChildOrder> c; c.init(); c.header.sourceId = src_;
-        router_.fillChild(*o, p, c.body, (uint64_t(src_) << 48) | ++childCounter_);
+        router_.fillChild(o, p, c.body, (uint64_t(src_) << 48) | ++childCounter_);
         emitWatermarks(f->seq); emit(&rt.header, f->seq, false); emit(&c.header, f->seq, false);
     }
     void onCheckpoint(const FrameHeader* f) {
@@ -152,21 +175,31 @@ private:
         if (lastIsReplace_) risk_.evaluateReplace(f, lastReplace_, e.d); else risk_.evaluate(f, lastOrder_, e.d);
         expected_[f->seq] = e;
     }
-    bool verifyDecision(const FrameHeader* f, const RiskDecision& d) {
+    void verifyDecision(const FrameHeader* f, const RiskDecision& d) {
         ++verified_;
         auto it = expected_.find(f->causeSeq);
-        if (it == expected_.end()) { note("RiskDecision at seq " + std::to_string(f->seq) + " with no order at cause " + std::to_string(f->causeSeq)); return false; }
-        const RiskDecision& e = it->second.d; bool replace = it->second.replace;
+        if (it == expected_.end()) { note("RiskDecision at seq " + std::to_string(f->seq) + " with no order at cause " + std::to_string(f->causeSeq)); return; }
+        const RiskDecision& e = it->second.d;
         if (e.orderId != d.orderId || e.verdict != d.verdict || e.reason != d.reason || e.buyingPowerAfter != d.buyingPowerAfter || e.notional != d.notional)
             note("RiskDecision for order " + std::to_string(d.orderId) + " (cause " + std::to_string(f->causeSeq) + "): live reason " + std::to_string(d.reason)
                  + " mask " + std::to_string(d.checkMask) + " vs replay " + std::to_string(e.reason) + " mask " + std::to_string(e.checkMask));
         expected_.erase(it);
-        return replace;
     }
-    void routeVerify(const FrameHeader* f, const RiskDecision& d) {
-        const NewOrder* o = oms_.parent(d.orderId); if (!o) return;
+    void routeVerify(const FrameHeader* f, uint64_t orderId) {
+        NewOrder o; if (!routeInput(oms_.find(orderId), o)) return;
         pullTo(f->seq);                                        // the book as the live engine saw it when it planned
-        StubRouter::Plan p = router_.plan(*o, book_); router_.placed(p); plans_[f->seq] = p;
+        StubRouter::Plan p = router_.plan(o, book_); router_.placed(p); plans_[f->seq] = p;
+    }
+    // Every frame the live OMS sequenced must be exactly what this OMS produced from the same inputs,
+    // in the same order: the dispute drill (regenerate the day's client reports) runs on every scenario.
+    void verifyOmsFrame(const FrameHeader* f) {
+        ++verified_;
+        if (omsExpected_.empty()) { note("OMS frame at seq " + std::to_string(f->seq) + " that the replay did not produce"); return; }
+        const auto& e = omsExpected_.front(); const auto* eh = reinterpret_cast<const FrameHeader*>(e.data());
+        if (eh->templateId != f->templateId || eh->causeSeq != f->causeSeq || eh->frameLength != f->frameLength
+            || std::memcmp(e.data() + sizeof(FrameHeader), reinterpret_cast<const std::byte*>(f) + sizeof(FrameHeader), f->frameLength - sizeof(FrameHeader)) != 0)
+            note("OMS frame at seq " + std::to_string(f->seq) + " (" + lookup(f->templateId)->name + ", cause " + std::to_string(f->causeSeq) + ") differs from the replay's");
+        omsExpected_.pop_front();
     }
     void pullTo(uint64_t causeSeq) {
         if (!wmIndex_ || !mdJournal_) return;
@@ -196,7 +229,8 @@ private:
     }
 
     Mode mode_; uint16_t src_;
-    RefData rd_; RiskEngine risk_; OmsLite oms_; StubRouter router_; BookLite book_; WatermarkTracker wm_;
+    RefData rd_; RiskEngine risk_; oms::Oms oms_; StubRouter router_; BookLite book_; WatermarkTracker wm_;
+    std::deque<std::vector<std::byte>> omsExpected_;
     const Journal* mdJournal_; uint64_t mdPos_ = 0; const std::vector<std::pair<uint64_t, uint64_t>>* wmIndex_ = nullptr;
     std::array<uint8_t, 32> snapHash_{};
     NewOrder lastOrder_{}; ReplaceOrder lastReplace_{}; FrameHeader lastHdr_{}; bool lastIsReplace_ = false;
@@ -218,10 +252,13 @@ public:
         fs::remove_all(coreDir); fs::remove_all(mdDir);
         Snapshot snap(cfg_.snapshot);
         const uint32_t NSYM = uint32_t(std::count_if(snap.instruments().begin(), snap.instruments().end(), [](const SymbolRecord& r) { return r.status != 0; }));
-        FakeClock clock; std::mt19937_64 rng(cfg_.seed);
+        FakeClock fake; SteadyClock steady; Clock& clock = cfg_.benchMode ? static_cast<Clock&>(steady) : static_cast<Clock&>(fake);
+        std::mt19937_64 rng(cfg_.seed);
         BroadcastRing coreRing(1 << 14), mdRing(1 << 16);
         Journal coreJ(coreDir, 0, 1, cfg_.segmentBytes), mdJ(mdDir, 1, 1, cfg_.segmentBytes);
         Sequencer core(0, 1, coreJ, coreRing, clock, cfg_.checkpointEvery), md(1, 8, mdJ, mdRing, clock, 0);
+        uint64_t maxLag = 0;
+        auto tick = [&]() -> int64_t { if (cfg_.benchMode) return steady.nowNs(); fake.t += 200'000 + int64_t(rng() % 1'800'000); return fake.t; };
 
         Engine eng(snap, cfg_.sessions, Engine::Mode::Live);
         StreamReader engCore(coreRing, coreJ, 1), engMd(mdRing, mdJ, 1), venueCore(coreRing, coreJ, 1);
@@ -237,7 +274,7 @@ public:
                 while (!core.submitBatch(std::span<FrameHeader*>(hs))) engCore.poll([&](const FrameHeader* f) { eng.onCore(f); });
             }
         };
-        auto drainCore = [&]() { engCore.poll([&](const FrameHeader* f) { eng.onCore(f); }); flushEngine(); };
+        auto drainCore = [&]() { if (cfg_.benchMode) { uint64_t l = coreRing.lag(0); if (l > maxLag) maxLag = l; } engCore.poll([&](const FrameHeader* f) { eng.onCore(f); }); flushEngine(); };
         auto drainMd = [&]() { engMd.poll([&](const FrameHeader* f) { eng.onMd(f); }); };
         auto submitCore = [&](FrameHeader* f) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!core.submit(f)) drainCore(); };
         auto venueEmit = [&](FrameHeader* f) { while (!core.submit(f)) drainCore(); };
@@ -250,11 +287,10 @@ public:
         if (!cfg_.eventsFile.empty()) events = loadEvents(cfg_.eventsFile);
         const uint32_t steps = events.empty() ? cfg_.steps : uint32_t(events.size());
         for (uint32_t step = 0; step < steps; ++step) {
-            clock.t += 200'000 + int64_t(rng() % 1'800'000);          // 0.2 to 2 ms between steps
-            int64_t now = clock.t;
+            int64_t now = tick();                                          // 0.2 to 2 ms between steps on the fake clock
             if (!events.empty()) {
                 auto* f = reinterpret_cast<FrameHeader*>(events[eventIdx++].data());
-                if (f->originTs > clock.t) clock.t = f->originTs;
+                if (!cfg_.benchMode && f->originTs > fake.t) fake.t = f->originTs;
                 if (f->streamId == 1) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!md.submit(f)) drainMd(); venue.onMd(f); }
                 else submitCore(f);
             } else {
@@ -272,15 +308,40 @@ public:
             if (rng() & 1) { drainMd(); drainCore(); } else { drainCore(); drainMd(); }
         }
         // settle: let in-flight children arrive and everything drain
-        for (int i = 0; i < 64; ++i) { clock.t += 1'000'000; venueCore.poll([&](const FrameHeader* f) { venue.onCore(f, clock.t); }); venue.flush(clock.t, venueEmit); venue.process(clock.t, venueEmit); drainMd(); drainCore(); }
+        for (int i = 0; i < 64; ++i) { int64_t t = cfg_.benchMode ? steady.nowNs() : (fake.t += 1'000'000); venueCore.poll([&](const FrameHeader* f) { venue.onCore(f, t); }); venue.flush(t, venueEmit); venue.process(t, venueEmit); drainMd(); drainCore(); }
         core.checkpoint(); drainCore(); drainCore();
 
         Stats s; s.orders = eng.oms().orders(); s.accepted = eng.oms().accepted(); s.rejected = eng.oms().rejected();
         s.fills = eng.oms().fills(); s.cancelled = eng.oms().cancelled(); s.venueRejects = eng.oms().venueRejected(); s.children = eng.router().children();
         s.checkpoints = eng.checkpoints(); s.coreSeq = core.lastSeq(); s.mdSeq = md.lastSeq(); s.delayed = venue.delayed();
         for (const auto& e : venue.dropCopy()) if (e.execType == ExecType::Fill || e.execType == ExecType::PartialFill) ++s.dropCopyFills;
-        s.placed = eng.router().placed(); s.finalHash = eng.hash();
+        s.placed = eng.router().placed(); s.finalHash = eng.hash(); s.maxRingLag = maxLag;
         liveStats_ = s; return s;
+    }
+
+    // Front-to-back stage latencies from the core journal alone: originTs to seqTs for ingress, then
+    // each causeSeq hop. No instrumentation in the engines; the header carries it.
+    struct Stage { std::string name; std::vector<double> ns; };
+    std::vector<Stage> stageLatencies() {
+        Journal coreJ(cfg_.workdir + "/core.jnl", 0, 1, cfg_.segmentBytes);
+        struct Rec { uint16_t tid; int64_t seqTs, originTs; uint64_t cause; };
+        std::vector<Rec> recs(coreJ.lastSeq() + 2);
+        std::vector<Stage> st = {{"f2b.ingress_origin_to_seq", {}}, {"f2b.risk_order_to_decision", {}}, {"f2b.route_decision_to_child", {}},
+                                 {"f2b.venue_child_to_ack", {}}, {"f2b.oms_venue_exec_to_client_report", {}}, {"f2b.order_origin_to_child_sequenced", {}}};
+        coreJ.replay(1, 0, [&](const FrameHeader* f) {
+            recs[f->seq] = {f->templateId, f->seqTs, f->originTs, f->causeSeq};
+            auto hop = [&](size_t i) { const Rec& c = recs[f->causeSeq]; st[i].ns.push_back(double(f->seqTs - c.seqTs)); };
+            if (f->templateId == uint16_t(TemplateId::NewOrder) && f->originTs) st[0].ns.push_back(double(f->seqTs - f->originTs));
+            else if (f->templateId == uint16_t(TemplateId::RiskDecision) && f->sourceId == 3 && recs[f->causeSeq].tid == uint16_t(TemplateId::NewOrder)) hop(1);
+            else if (f->templateId == uint16_t(TemplateId::ChildOrder) && f->sourceId == 3) {
+                hop(2);
+                const Rec& rd = recs[f->causeSeq]; const Rec& o = recs[rd.cause];
+                if (o.tid == uint16_t(TemplateId::NewOrder) && o.originTs) st[5].ns.push_back(double(f->seqTs - o.originTs));
+            }
+            else if (f->templateId == uint16_t(TemplateId::VenueAck) && f->causeSeq) hop(3);
+            else if (f->templateId == uint16_t(TemplateId::ExecReport) && f->sourceId == 4 && f->causeSeq && recs[f->causeSeq].tid == uint16_t(TemplateId::ExecReport)) hop(4);
+        });
+        return st;
     }
 
     // Cold replay of the core journal; market data pulled to each watermark. Returns mismatches.
