@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gap analysis and detailed designs for the remaining components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF1F4; --panel:#FFFFFF; --ink:#1B2430; --muted:#5C6773; --rule:#C9D0D8;
+  --hot:#C8781C; --hot-soft:#F6E4CC; --cold:#2E7D7A; --cold-soft:#D4E9E7;
+  --warn:#9A3B2B; --warn-soft:#F3DDD8;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+    --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+    --warn:#E07A66; --warn-soft:#3B1F1A;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+  --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+  --warn:#E07A66; --warn-soft:#3B1F1A;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:17px;line-height:1.6}
+h1,h2,h3,h4{font-family:"Bitter","Georgia",serif;line-height:1.2;margin:0}
+h1{font-size:2.4rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.65rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:2px solid var(--ink)}
+h3{font-size:1.2rem;font-weight:600;margin-top:2rem}
+h4{font-size:1rem;font-weight:600;margin-top:1.2rem}
+p{margin:.8rem 0;max-width:70ch}
+ul,ol{max-width:70ch;padding-left:1.3rem}
+li{margin:.3rem 0}
+a{color:var(--cold)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--hot);outline-offset:2px}
+code{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.92em;background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:0 .3em}
+pre{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.5;max-width:100%}
+pre code{border:0;padding:0;background:none}
+.wrap{display:grid;grid-template-columns:230px minmax(0,1fr);gap:3rem;max-width:1180px;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+nav.toc{position:sticky;top:1.5rem;align-self:start;font-size:.88rem;line-height:1.45}
+nav.toc ol{list-style:none;padding:0;margin:0}
+nav.toc li{margin:.25rem 0}
+nav.toc a{color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+nav.toc .grp{margin-top:1rem;color:var(--ink);font-weight:600}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:1.5rem}nav.toc{position:static;border-bottom:1px solid var(--rule);padding-bottom:1rem}nav.toc ol{columns:2}}
+header.hero{margin-bottom:2rem}
+header.hero .sub{font-size:1.15rem;color:var(--muted);max-width:62ch;margin-top:.8rem}
+.legend{display:flex;gap:1.6rem;flex-wrap:wrap;margin:1.2rem 0 .4rem;font-size:.9rem;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:.85em;height:.85em;border-radius:2px;margin-right:.45em;vertical-align:-.08em}
+.legend .h::before{background:var(--hot)} .legend .c::before{background:var(--cold)}
+.path{display:inline-block;font-size:.72rem;font-weight:600;padding:.12rem .5rem;border-radius:3px;vertical-align:.25em;margin-left:.5rem;letter-spacing:.01em}
+.path.hot{background:var(--hot-soft);color:var(--hot)} .path.cold{background:var(--cold-soft);color:var(--cold)}
+.note{border-left:4px solid var(--hot);background:var(--panel);padding:.9rem 1.1rem;margin:1.4rem 0;max-width:72ch;border-radius:0 4px 4px 0}
+.note.risk{border-left-color:var(--warn)}
+.note p{margin:.4rem 0}
+.diagram{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.6rem;margin:1.2rem 0;overflow-x:auto}
+.diagram svg{width:100%;min-width:760px;height:auto;display:block;font-family:"IBM Plex Sans",sans-serif}
+.spec{display:grid;grid-template-columns:150px minmax(0,1fr);gap:.5rem 1.2rem;margin:1rem 0;max-width:78ch}
+.spec dt{color:var(--muted);font-size:.9rem;font-weight:500;padding-top:.15rem}
+.spec dd{margin:0}
+.spec dd ul{margin:0;padding-left:1.1rem}
+@media (max-width:600px){.spec{grid-template-columns:1fr}.spec dt{margin-top:.6rem}}
+.tablewrap{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;font-size:.92rem;min-width:560px}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:600;border-bottom:2px solid var(--ink)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.total td{font-weight:600;border-top:2px solid var(--ink)}
+.phases{counter-reset:ph;list-style:none;padding:0;max-width:78ch}
+.phases>li{counter-increment:ph;display:grid;grid-template-columns:3rem minmax(0,1fr);gap:.8rem;padding:1rem 0;border-bottom:1px solid var(--rule)}
+.phases>li::before{content:counter(ph);font-family:"Bitter",serif;font-size:1.8rem;font-weight:700;color:var(--hot);line-height:1}
+.phases h4{margin-top:.15rem}
+.phases p{margin:.35rem 0}
+.tag{font-size:.8rem;color:var(--muted)}
+footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:var(--muted);font-size:.88rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+<ol>
+<li><a href="#status">Where we are</a></li>
+<li><a href="#bar">What competitive means now</a></li>
+<li><a href="#debt">Debt in what exists</a></li>
+<li class="grp">Component designs</li>
+<li><a href="#c-sim">Simulator harness</a></li>
+<li><a href="#c-oms">Order manager</a></li>
+<li><a href="#c-sor">Smart order router</a></li>
+<li><a href="#c-md">Market data</a></li>
+<li><a href="#c-vgw">Venue gateways</a></li>
+<li><a href="#c-gw">Client gateways</a></li>
+<li><a href="#c-pos">Position keeper</a></li>
+<li><a href="#c-infra">Platform and failover</a></li>
+<li><a href="#c-mm">Market maker and internaliser</a></li>
+<li><a href="#c-loan">Stock loan</a></li>
+<li><a href="#c-margin">Margin engine</a></li>
+<li><a href="#c-post">Post-trade and ledger</a></li>
+<li><a href="#c-comp">Compliance and reporting</a></li>
+<li><a href="#c-control">Control plane</a></li>
+<li class="grp">Delivery</li>
+<li><a href="#criteria">Acceptance criteria</a></li>
+<li><a href="#plan">Build order</a></li>
+<li><a href="#risks">Open decisions</a></li>
+</ol>
+</nav>
+
+<main>
+<header class="hero">
+<h1>Gap analysis and detailed designs for the remaining components</h1>
+<p class="sub">Document 3. What v0.1.0 has proven, what is missing between it and a broker that can take an order, and a design for each missing piece detailed enough to start coding against the schema and sequencer that already exist.</p>
+<div class="legend"><span class="h">Hot path: latency-critical, deterministic, C++</span><span class="c">Cold path: correctness-critical, services, any language</span></div>
+</header>
+
+<h2 id="status">Where we are</h2>
+<p>Documents 1 and 2 describe the whole system. v0.1.0 delivers the foundation they said to build first: the schema and generators, the snapshot tooling, the sequencer core and the pre-trade risk engine, each with a replay-determinism test that passes. That is real, and it is the part that is hardest to retrofit. It is also roughly a tenth of the engineering. Nothing yet touches a client, a venue or a market-data feed, and no component runs outside a single test process.</p>
+<div class="tablewrap">
+<table>
+<tr><th>Component</th><th>Design 1 status</th><th>Code status</th><th>What is missing</th></tr>
+<tr><td>Schema and codecs</td><td>Specified</td><td>Built: 64 messages, C++ and Python codecs, compatibility checker, v1 to v2 evolution exercised</td><td>Go and TypeScript emitters, Arrow schema, generated field documentation, <code>BookSnapshot</code> and <code>ClockSync</code> messages named in document 2 but absent from the schema</td></tr>
+<tr><td>Security master and snapshot</td><td>Specified</td><td>Built: build, verify, diff, mmap loader with hash verification, engine-side view</td><td>The Postgres bitemporal master, the nightly pipeline, the manifest, vendor ingestion. Fixtures are hand-made</td></tr>
+<tr><td>Sequencer</td><td>Specified</td><td>Built in-process: journal with torn-tail recovery, broadcast ring, atomic batches, checkpoints, gap refill, watermarks</td><td>Aeron or shared-memory transport between processes, standby sequencer and promotion, journal rotation, multi-host fan-out</td></tr>
+<tr><td>Pre-trade risk</td><td>Specified</td><td>Built: 27 reject reasons, locate accounting, buying power, exposure, replay-verified on 200k orders</td><td>Replace evaluation, position load at session start, sliding rate window, duplicate-order heuristic; see <a href="#debt">debt</a></td></tr>
+<tr><td>Simulator harness</td><td>Specified as the first thing to build</td><td>A toy inside <code>test_seq.cpp</code></td><td>Everything: venue simulator, feed simulator, scenario driver, determinism checker, CI golden runs</td></tr>
+<tr><td>Order manager</td><td>Specified</td><td>Missing. The risk test fakes <code>OrderState</code></td><td>All of it</td></tr>
+<tr><td>Smart order router</td><td>Specified</td><td>Missing. The sequencer test has a two-venue toy router</td><td>All of it, plus the TCA loop that feeds it</td></tr>
+<tr><td>Market data</td><td>Specified</td><td>Missing. Messages exist; nothing produces them</td><td>Feed handlers, book builder, NBBO, capture, shared-memory book view</td></tr>
+<tr><td>Venue gateways</td><td>Specified</td><td>Missing</td><td>OUCH, Pillar, BOE, FIX sessions; simulator twins; certification</td></tr>
+<tr><td>Client gateways</td><td>Specified</td><td>Missing</td><td>Binary protocol, FIX engine, session journals, drop copy</td></tr>
+<tr><td>Position keeper</td><td>Specified</td><td>Missing. Risk keeps a notional-only shadow</td><td>Hot view, cold ledger, lots, corporate actions, reconciliation</td></tr>
+<tr><td>Market maker, internaliser</td><td>Specified</td><td>Missing</td><td>All of it, plus the research pipeline</td></tr>
+<tr><td>Stock loan</td><td>Specified</td><td>Missing. Locate messages exist and risk consumes them</td><td>Availability ledger, locate engine, borrow booking, lender integration, recalls, Reg SHO</td></tr>
+<tr><td>Margin engine</td><td>Specified</td><td>Missing. <code>BuyingPowerUpdate</code> is consumed</td><td>Rules, recompute, calls, liquidation</td></tr>
+<tr><td>Post-trade, ledger, clearing</td><td>Specified</td><td>Missing</td><td>All of it</td></tr>
+<tr><td>Compliance and reporting</td><td>Specified</td><td>Missing</td><td>CAT, 605/606, best-ex, Reg SHO evidence, surveillance feed, retention</td></tr>
+<tr><td>Control plane, observability, security</td><td>Specified</td><td>Missing. Telemetry messages exist</td><td>Config, deployments, kill switch, exporters, trace tool, mTLS, HSM, four-eyes</td></tr>
+</table>
+</div>
+<p>Two things follow. First, the next increments should be the ones that turn the foundation into a system that can be exercised end to end in simulation, because that is what makes every later component cheap to test: the simulator and the OMS, then market data and the router. Second, the debt already visible in v0.1.0 should be paid now, while the code is small, rather than after the OMS has been built on top of it.</p>
+
+<h2 id="bar">What competitive means now</h2>
+<p>Document 1 defined the position: not the fastest, but the most provable. This section makes that concrete against the three kinds of firm a new API-first broker is measured against, and turns each claim into something the code has to demonstrate.</p>
+<div class="tablewrap">
+<table>
+<tr><th>Against</th><th>What they have</th><th>Where we win</th><th>Evidence the system must produce</th></tr>
+<tr><td>Retail brokers selling order flow</td><td>Scale, zero commissions, a wholesaler relationship that funds it</td><td>Per-fill price improvement measured against the NBBO at arrival, with the router's rejected alternative logged; no conflict hidden inside a wholesaler</td><td>Every <code>ExecReport</code> carries <code>nbboBid</code>/<code>nbboAsk</code>; every parent has a <code>RouteDecision</code> with <code>rejectedAltCost</code>; 605 and 606 reports generated from the log with no manual step</td></tr>
+<tr><td>Institutional agency brokers and bank algos</td><td>Venue breadth, algo suites, decades of certification</td><td>Latency the client can verify: hardware timestamps on ingress and egress, a published p99.9, and a causal trace per order; deterministic replay to settle disputes</td><td><code>originTs</code> from NIC timestamps; <code>LatencySample</code> per stage; a trace tool that renders the <code>causeSeq</code> chain; a replay that reproduces the day bit for bit</td></tr>
+<tr><td>Modern prime brokers built in the last decade</td><td>Cloud-native books, clean APIs, real-time margin</td><td>Same architecture with a hot path they do not have, plus locates that name a source and a margin figure that is correct intraday</td><td>Every short sale references a <code>LocateGranted</code> with <code>sourceId</code>; <code>BuyingPowerUpdate</code> from a full recompute within seconds of a fill; zero unexplained breaks at reconciliation</td></tr>
+</table>
+</div>
+<h3>Table stakes in 2026</h3>
+<ul>
+<li>T+1 settlement in the US, and UK/EU moving to it in 2027: the post-trade pipeline must allocate and affirm same day.</li>
+<li>CAT reporting with full linkage between client order, child orders and executions. The <code>causeSeq</code> chain gives this natively; the extraction still has to be written and tested against the CAT specification.</li>
+<li>Rule 15c3-5 market-access controls that are provably applied before any order leaves. The risk engine and the venue gateway's accept check are that proof; both need to exist.</li>
+<li>Rule 605 execution-quality reporting under the amended rule, and 606 order-routing disclosures. Both are queries over the log once the OMS records NBBO at fill time.</li>
+<li>Regulation NMS tick-size and access-fee changes from the 2024 amendments. The tick tables and fee schedules are already versioned data, not code; confirm the compliance dates in force with counsel because parts have been litigated.</li>
+<li>FIX 4.4 plus a binary API, drop copy, cancel-on-disconnect, a kill switch and hot failover. Clients and clearing firms ask about all of these in due diligence.</li>
+</ul>
+<div class="note"><p><strong>The honest gap.</strong> None of the differentiators above is possible without the OMS, router, market data and venue gateways, which are the unglamorous middle of the system. The sections below design them so that the competitive claims fall out of ordinary operation rather than being bolted on later.</p></div>
+
+<h2 id="debt">Debt in what exists</h2>
+<p>Found while reading and testing v0.1.0. Each is small now and expensive later. Fix in v0.2 before the OMS depends on any of it.</p>
+<h3>Risk engine</h3>
+<ul>
+<li><strong>Message-rate window is fixed, not sliding.</strong> The one-second bucket on <code>seqTs</code> lets an account send twice its limit across a boundary. Replace with ten 100 ms buckets per account (a <code>uint16[10]</code> ring plus a head index, 24 bytes) and reject when the sum exceeds the limit. Still deterministic, still no allocation.</li>
+<li><strong>Duplicate clOrdId key can collide.</strong> The session, clOrdId and account are XORed into one 64-bit key. Store the pair (sessionId, clOrdId) as a 96-bit key in an open-addressing table instead; the same table replaces <code>clOrdIds_</code> and is reused by the OMS for cancel-by-origClOrdId.</li>
+<li><strong>No position at session start.</strong> The engine learns positions only from fills it sees, and learns accounts only from <code>BuyingPowerUpdate</code>. Consume the snapshot's accounts section at <code>load()</code>, and consume <code>PositionSnapshot</code> (600) and <code>ExposureSnapshot</code> (402) so a mid-day restart and an overnight position both start from truth.</li>
+<li><strong>Replace is not evaluated.</strong> <code>ReplaceOrder</code> (102) has no path through the engine although <code>UnknownOrder</code> and <code>OrderNotLive</code> reasons exist. Add <code>evaluateReplace</code>: quantity down releases commitment in place; quantity up or price change re-runs the credit and collar checks on the delta.</li>
+<li><strong>Duplicate-order heuristic.</strong> Document 1 asks for detection of the same account, symbol, side, quantity and price within a window. Add a per-account ring of the last 16 order fingerprints and a reason code <code>DuplicateOrder</code>.</li>
+<li><strong>SSR re-pricing.</strong> Rejecting a short at or below the bid is correct but loses the order. The OMS design below re-prices to bid plus one tick and marks the order; risk accepts the marked order if the price test passes.</li>
+<li><strong>Money aggregates.</strong> As the README says, int64 at 1e-8 caps a firm-wide sum at $92 billion. Schema v3 adds a <code>MoneyC</code> type at 1e-4 units for exposure and buying-power aggregates, appended as new fields with the old ones deprecated. Per-order fields stay at 1e-8.</li>
+<li><strong>Tables.</strong> The cancel path is dominated by <code>unordered_map::erase</code>. The OMS introduces an open-addressing table keyed by our 64-bit ids; the risk engine adopts the same type for open orders, locates and positions.</li>
+</ul>
+<h3>Sequencer</h3>
+<ul>
+<li><strong>Reader handler is a <code>std::function</code>.</strong> That is an indirect call per frame on the hot path. Make <code>StreamReader::poll</code> a template over the handler and keep a type-erased overload for tools.</li>
+<li><strong>Journal is one unbounded file.</strong> A day of market data is hundreds of gigabytes. Move to preallocated 1 GiB segments with a segment index, so recovery scans one segment and replay seeks by segment. This is also the shape Aeron Archive has, which keeps the swap open.</li>
+<li><strong>Checkpoint state hash is zero.</strong> The sequencer writes <code>Checkpoint</code> without a hash; engines' hashes are only compared inside the tests. Add a <code>CheckpointAck</code> message (id 13) that each engine sequences with its hash after a checkpoint, so divergence is detectable in production, not just in CI.</li>
+<li><strong>Frame flags.</strong> <code>replayed</code> and <code>simulated</code> are defined and never set. The reader sets <code>replayed</code> on journal refills; the simulator sets <code>simulated</code> on everything it injects. Compliance extraction uses both.</li>
+<li><strong>Single process.</strong> The ring is a C++ object, not a shared-memory segment. The platform section covers the move to Aeron IPC.</li>
+</ul>
+<h3>Schema and tooling</h3>
+<ul>
+<li>Add <code>BookSnapshot</code> (205) for late-join recovery on market-data streams, <code>ClockSync</code> (14) for cross-host time, <code>CheckpointAck</code> (13), <code>VenueScorecard</code> (308) and <code>RoutingProfileUpdate</code> (309) for the router, and <code>DuplicateOrder</code> in <code>reasons.csv</code>. All are append-only additions in v3.</li>
+<li>Go emitter in <code>sbegen.py</code>, because the cold-path services are Go by the target profile and must decode the log. The TypeScript projection can wait for the web client.</li>
+<li>A <code>tools/loginspect</code> utility: dump a journal by sequence range or template, follow a <code>causeSeq</code> chain, diff two journals. Every later component's debugging starts here.</li>
+<li>CI: add a clang and libc++ build with AddressSanitizer and UndefinedBehaviorSanitizer, a fuzz target each for the journal recovery scan and the snapshot loader (both parse files that could be corrupt), and a benchmark gate that fails when a stage's p99.9 grows by more than a set percentage against a stored baseline.</li>
+</ul>
+
+<h2 id="c-sim">Simulator harness <span class="path hot">sim/</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Run every hot-path binary, unchanged, against recorded or synthetic days with a deterministic clock, so that a component is tested by exact comparison before it exists in production. Document 1 called this the single biggest quality multiplier; it is still the toy inside <code>test_seq.cpp</code>.</dd>
+<dt>Shape</dt><dd>
+<ul>
+<li><strong>Scenario is a log.</strong> A scenario is a journal of external events (client orders, feed packets as <code>BookDelta</code>/<code>Trade</code>, lender responses, operator actions) with <code>originTs</code> set and <code>seq</code> zero. Python produces them (<code>sim/scenarios/*.py</code>) or they are cut from a captured day. The driver feeds events in <code>originTs</code> order to the right stream's sequencer, advancing the <code>FakeClock</code> to each event's time.</li>
+<li><strong>VenueSim.</strong> One per venue id. Keeps an L2 book per symbol from the feed events. A child order arrives after <code>VenueRecord.oneWayLatencyNs</code>; an aggressive child crosses displayed liquidity in price-time order and emits <code>VenueAck</code> then <code>ExecReport</code>s with <code>liquidityFlag</code> set; a passive child joins the queue at its level with queue position equal to the displayed quantity at arrival, and is filled as subsequent <code>Trade</code> events at that price consume the queue ahead of it. Rejects (bad tick, halted, unknown symbol) use the venue's reason codes. Cancel-on-disconnect and session drops are scenario events.</li>
+<li><strong>FeedSim.</strong> Replays market-data streams at recorded timestamps, compressed time, or as fast as possible, and can drop, reorder or duplicate packets to exercise recovery.</li>
+<li><strong>ClientSim.</strong> Generates <code>NewOrder</code> flow: random (as <code>test_risk</code> does), replayed from a recorded client session, or adversarial (rate bursts, duplicate ids, cancels of unknown orders).</li>
+<li><strong>Harness.</strong> Wires one sequencer, journal and ring per stream in one process for CI; in multi-process mode uses the same Aeron IPC the production deployment uses. Starts each engine, drives the scenario, then runs the determinism checker: every engine's <code>CheckpointAck</code> hash must equal a second cold replay's hash, and must equal the stored baseline for that scenario.</li>
+</ul></dd>
+<dt>Determinism</dt><dd>Sim and production differ only in who writes the external events. Everything an engine sees is sequenced; the <code>simulated</code> frame flag is set on injected events so nothing simulated can ever be mistaken for a real fill downstream.</dd>
+<dt>Tests it enables</dt><dd>Golden runs: a recorded day per venue with stored hashes and decision counts, replayed in CI on every pull request. Property runs: random scenarios with invariants (no trade-through, child quantity never exceeds parent leaves, buying power never negative). Failure drills: sequencer restart, torn journal, feed gap, venue disconnect, kill switch mid-flight.</dd>
+<dt>Size</dt><dd>About 4 000 lines of C++ and 1 000 of Python; five weeks. It is built first because the OMS and router are tested through it.</dd>
+</dl>
+
+<h2 id="c-oms">Order manager <span class="path hot">core/oms</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Own the lifecycle of every parent and child order, aggregate child fills to the parent, and produce the one client-facing <code>ExecReport</code> per event with the NBBO at that moment on it. The README lists it as the next component; the schema already carries its messages.</dd>
+<dt>State</dt><dd>
+<ul>
+<li>An order arena: 4 M slots of 256 bytes on huge pages, free list, no allocation after start. A slot holds the ids (order, client, parent, session), account and symbol, side, type, TIF, quantity, leaves, cumulative quantity and cumulative notional (average price is derived, never stored rounded), status, an intrusive child list, the accepted risk decision's sequence, the locate id, the last venue id and timestamps.</li>
+<li>Three open-addressing tables sized at start: <code>orderId</code> to slot, (sessionId, clOrdId) to slot for cancel and replace by original client id, and <code>childOrderId</code> to slot. All 64-bit keys, linear probing, power-of-two capacity, tombstones compacted at end of day.</li>
+<li>The fee table from the snapshot's fee section plus sequenced <code>FeeScheduleUpdate</code>s, indexed by (venue, feeCode, liquidity) with tier thresholds.</li>
+<li>Last <code>Nbbo</code> per symbol from the market-data streams, so each fill can record <code>nbboBid</code>/<code>nbboAsk</code>.</li>
+</ul></dd>
+<dt>State machine</dt><dd>A table indexed by (status, event) giving the next status or Illegal. Statuses are the schema's <code>OrdStatus</code>; events are RiskAccept, RiskReject, ChildAck, ChildReject, PartialFill, Fill, CancelRequest, CancelAck, CancelReject, ReplaceRequest, ReplaceAck, Expire, Kill, TradeBust, TradeCorrect. An illegal transition is a logged <code>Alert</code> and a no-op, never a crash and never a guess. The table is data, so the exhaustive test enumerates every cell.</dd>
+<dt>Flow</dt><dd>
+<ol>
+<li><code>NewOrder</code> arrives: allocate slot, PendingNew. <code>RiskDecision</code> Accept: Live, emit <code>OrderState</code>. Reject: emit <code>ExecReport</code> with execType Rejected and the reason; free the slot at end of day, not immediately, so late messages resolve.</li>
+<li>The router's <code>ChildOrder</code>s link to the parent. <code>VenueAck</code> moves the child to Live; <code>VenueReject</code> to Rejected and notifies the router to re-plan the remainder.</li>
+<li>A venue-level <code>ExecReport</code> from the gateway updates the child, then the parent's leaves, cumulative quantity and notional, then emits the parent-level <code>ExecReport</code> with fee computed from the table, liquidity flag and NBBO. <code>execId</code> is minted here; the venue's id is carried verbatim.</li>
+<li><code>CancelOrder</code>: PendingCancel; cancels each live child through the router; Cancelled when the last child resolves. <code>ReplaceOrder</code>: quantity down applies in place to children proportionally; quantity up or a price change is a cancel of children plus a new route, and the delta goes back through risk with <code>causeSeq</code> pointing at the replace.</li>
+<li>Time in force: Day orders expire at the venue's close from the calendar, via a sequenced <code>Timer</code>; GTC orders are written to an open-orders section of the next snapshot and re-injected at <code>SessionStart</code> with the <code>replayed</code> flag.</li>
+<li>SSR: a short sale at or below the bid while SSR is active is re-priced to bid plus one tick, flagged in <code>orderFlags</code>, and sent through risk; the client sees the re-price on the acknowledgement.</li>
+<li>Kill switch: on <code>KillSwitch</code> every live order for the scope moves to PendingCancel and every child is cancelled through the gateways in one batch.</li>
+</ol></dd>
+<dt>Determinism</dt><dd>All inputs are sequenced; NBBO is read from the market-data stream and each emitted batch carries an <code>MdWatermark</code>, exactly as the sequencer test does. No wall clock. The whole day is replayable and the client-visible reports regenerate byte for byte, which is how a dispute is settled.</dd>
+<dt>Tests</dt><dd>Exhaustive (status, event) table test. Property test with random legal and illegal event sequences. Replay determinism. Fee computation against published schedule examples. A dispute drill: regenerate a day's client reports from the journal and compare to those sent.</dd>
+<dt>Target</dt><dd>One microsecond per transition; four million parent orders a day on one core with headroom.</dd>
+<dt>Size</dt><dd>About 3 000 lines; four weeks after the simulator exists.</dd>
+</dl>
+
+<h2 id="c-sor">Smart order router <span class="path hot">core/router</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Turn each accepted parent into child orders across venues that maximise expected net price, record the alternative it rejected, and release children so they land together.</dd>
+<dt>Inputs</dt><dd>Live parents from the OMS; per-venue books and the NBBO from the shared-memory book view; <code>VenueStatus</code>; the fee table; a <code>VenueScorecard</code> (new message 308: venue, symbol or zero for all, fill rate, effective spread, post-fill reversion, latency p50 and p99, all in basis points or nanoseconds) sequenced by the TCA service; and a <code>RoutingProfileUpdate</code> (309) mapping a profile id to a strategy and its parameters.</dd>
+<dt>Strategies</dt><dd>Each is a pure function from (parent, book views, scorecard, fees, profile) to a plan of up to eight children with venue, quantity, price, type, TIF, flags and release offset, plus the expected cost and the best rejected alternative. The initial library: <em>Sweep</em> (take displayed liquidity at or better than the limit across venues, cheapest net first, ISO flag when crossing protected quotes); <em>DarkFirst</em> (midpoint at ATSs with a time limit, then sweep); <em>PassivePost</em> (rest on the venue with the best rebate and fill rate, cross after a timer); <em>MidPeg</em>; and <em>InternalizeFirst</em> (ask the internaliser when the market maker quotes the symbol, then fall through).</dd>
+<dt>Cost model</dt><dd>For each venue and liquidity type: expected net price = fill probability × (price adjusted by fee or rebate) + (1 − fill probability) × cost of the fallback, plus a reversion penalty from the scorecard. Fill probability comes from the scorecard per venue and liquidity type, updated daily by TCA. The chosen plan and the runner-up are written to <code>RouteDecision</code>; that record is the best-execution evidence.</dd>
+<dt>Release</dt><dd><code>ChildOrder.releaseTs</code> = now + (slowest venue latency − this venue's latency) from <code>VenueRecord.oneWayLatencyNs</code>, refined by measured acks. The venue gateway holds the child until then. This stops a fast venue from printing before a slow one sees the order.</dd>
+<dt>Re-planning</dt><dd>On a child reject, cancel or partial fill leaving quantity, the strategy is re-entered with the remaining quantity and the current books. Each child carries a <code>strategyTag</code> so TCA can attribute outcomes to the strategy step.</dd>
+<dt>Regulation</dt><dd>Never trade through a protected quote without ISO; respect locked and crossed markets; honour the client's <code>noInternalize</code> and <code>allowDark</code> flags; the fee optimisation is logged so a best-ex committee can see when rebate capture would have cost price improvement.</dd>
+<dt>Determinism</dt><dd>The router submits [<code>MdWatermark</code>, <code>RouteDecision</code>, <code>ChildOrder</code>…] as one atomic batch, the pattern the sequencer test already proves. Replay reconstructs the exact books it saw.</dd>
+<dt>Tests</dt><dd>Scenario tests in the simulator with named market shapes (faster but thinner venue, rebate versus price, locked market, halt mid-sweep). Invariants: no trade-through, total child quantity never exceeds parent leaves, ISO only when allowed. Replay determinism. A 606 report generated from a simulated day.</dd>
+<dt>Size</dt><dd>About 3 000 lines plus 400 per strategy; five weeks including the TCA feedback loop in Python.</dd>
+</dl>
+
+<h2 id="c-md">Market data <span class="path hot">core/md</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Turn venue feeds into sequenced level deltas, a normalised book per symbol and venue, and an NBBO, with hardware timestamps and full capture.</dd>
+<dt>Feed handlers</dt><dd>One process per feed, pinned. Order: Nasdaq TotalView-ITCH 5.0 over MoldUDP64 first (largest share of lit volume, best documentation, sample days published), then the SIP (UTP and CTA) for the official NBBO, then Cboe PITCH and NYSE Pillar. Each handler does A/B line arbitration by sequence number, detects gaps and recovers from the retransmit service or the snapshot service, and keeps an order-level table (order reference to price, quantity, side; open addressing sized 2<sup>26</sup>) from which it emits <code>BookDelta</code> with absolute quantity per level, <code>Trade</code>, <code>SymbolStatus</code> and <code>Imbalance</code>. The <code>endOfPacket</code> flag is set on the last delta from a packet so consumers react once per packet. Two timestamps are kept: NIC receive time in <code>originTs</code> and the venue's time in <code>venueTs</code>.</dd>
+<dt>Streams</dt><dd>Sixteen market-data streams, symbol range of 4 096 each, so a symbol's data from every venue is on one stream and book building is local to that stream's consumers. Stream id is 1 + symbolIdx / 4096. The core stream stays free of market data.</dd>
+<dt>Book builder</dt><dd>Per symbol and venue: two flat arrays of 64 levels indexed by tick from a base price, re-based when the top drifts; a consolidated view across venues; an NBBO computed from direct feeds with the SIP's NBBO carried alongside in <code>Nbbo</code> (the message already has both). Published to consumers through a shared-memory segment with a seqlock per symbol: a 128-byte top-of-book record for the router and market maker, and the full ladders for anyone that wants depth.</dd>
+<dt>Recovery</dt><dd><code>BookSnapshot</code> (new message 205: symbol, venue, up to 16 levels per side, as-of stream sequence) is published every N seconds per symbol on the stream, so a late-starting consumer loads the last snapshot and applies deltas from there instead of replaying from the open.</dd>
+<dt>Capture</dt><dd>Every packet to a per-feed, per-day capture file with hardware timestamps. This is the simulator's input and the evidence in any dispute about what the market showed.</dd>
+<dt>Tests</dt><dd>Parser golden tests against published ITCH sample files. Book invariants (best bid below best ask unless the venue reports crossed; level quantities never negative). Gap drills in the simulator with dropped and reordered packets. Throughput of at least three million messages per second per handler; packet-to-published-delta under two microseconds at the median.</dd>
+<dt>Size</dt><dd>About 2 000 lines per handler, 2 000 for the book builder, 1 000 for capture; ten weeks for ITCH plus SIP plus the builder. Vendor SDK for the long tail in year one, as document 1 says.</dd>
+</dl>
+
+<h2 id="c-vgw">Venue gateways <span class="path hot">core/venue</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Speak each venue's order-entry protocol, keep the session alive and recoverable, and refuse to send anything the risk engine has not accepted.</dd>
+<dt>Order</dt><dd>OUCH 5.0 over SoupBinTCP (Nasdaq) first, because it pairs with ITCH and its simulator is simple; then Pillar binary (NYSE), BOE (Cboe), and FIX 4.2 for the ATSs and wholesalers.</dd>
+<dt>Design</dt><dd>
+<ul>
+<li>One process per venue session, pinned core, kernel-bypass socket. Consumes <code>ChildOrder</code> for its venue from the core stream and holds each until <code>releaseTs</code>.</li>
+<li>Structural accept check: the gateway keeps a bitset of parent order ids seen in an accepting <code>RiskDecision</code>; a child whose parent is not in the set is dropped and an <code>Alert</code> is sequenced. This is the enforcement document 1 promised; it costs one bit test.</li>
+<li>Id mapping: the venue's order token is minted from <code>childOrderId</code>, so the reverse map on an ack is arithmetic; the venue's own execution id is carried verbatim in <code>venueExecId</code> for clearing and CAT.</li>
+<li>Session: login, sequence tracking, heartbeats, reconnect with replay of unsequenced messages, and cancel-on-disconnect according to <code>VenueRecord.cancelOnDisconnect</code>. Session state is journaled so a gateway restart resumes rather than resets.</li>
+<li>Outputs: <code>VenueAck</code>, <code>VenueReject</code>, child-level <code>ExecReport</code> with the venue's liquidity indicator mapped to our <code>Liquidity</code> enum, and <code>VenueStatus</code>.</li>
+<li>Simulator twin: the same encoder and decoder talking to VenueSim over a real SoupBin session in sim mode, so the code path in CI is the production one.</li>
+</ul></dd>
+<dt>Certification</dt><dd>A per-venue checklist derived from the venue's conformance script, run against the venue's test environment and recorded as a scenario the simulator can replay forever after.</dd>
+<dt>Tests</dt><dd>Codec round trips against the specification's byte examples. Session drills: disconnect mid-order, sequence gap, duplicate ack, cancel-on-disconnect. The property "never sends without an accept" over random inputs. Child sequence to wire under 1.5 microseconds.</dd>
+<dt>Size</dt><dd>About 2 500 lines per protocol; four weeks for OUCH including its simulator, three for each subsequent one.</dd>
+</dl>
+
+<h2 id="c-gw">Client gateways <span class="path hot">core/gateway</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Accept orders from clients, authenticate, normalise to internal messages, and deliver execution reports with the client's identifiers intact.</dd>
+<dt>Binary protocol</dt><dd>The internal SBE frames over TCP with a 16-byte session envelope (session id, client sequence, HMAC or the mTLS session binding). The gateway resolves ticker to <code>symbolIdx</code> through the snapshot's ticker index, account from the session, stamps <code>originTs</code> from the NIC timestamp, and sequences the <code>NewOrder</code>. Outbound, it filters the core stream's <code>ExecReport</code>s by session. Per-session inbound and outbound sequence numbers are journaled so a reconnect resumes with a resend of anything unacknowledged.</dd>
+<dt>FIX 4.4</dt><dd>License a low-latency C++ engine or build one; document 1 makes the case for licensing. Either way the FIX session sits in its own thread, translates to the same internal messages, and the drop-copy sessions for clients and for compliance are generated from the log so they cannot disagree with the book.</dd>
+<dt>Throttles</dt><dd>Message rate per session, open-order count per session and cancel-to-fill ratio warnings. These are protective; the risk engine is where the controls live.</dd>
+<dt>Tests</dt><dd>Fuzzing of the inbound decoder. Reconnect drills with in-flight orders. A FIX conformance suite. Binary gateway ingress-to-sequenced under two microseconds.</dd>
+<dt>Size</dt><dd>Binary gateway about 2 000 lines, three weeks. FIX four weeks with a licensed engine, twelve or more without.</dd>
+</dl>
+
+<h2 id="c-pos">Position keeper <span class="path hot">core/poskeeper</span> <span class="path cold">services/ledger</span></h2>
+<dl class="spec">
+<dt>Hot view</dt><dd>Preallocated arrays keyed by (account, symbol) through an open-addressing table: quantity, cumulative cost, borrowed quantity, and per-account gross and net notional. Folds every parent-level <code>ExecReport</code> fill. Publishes <code>PositionSnapshot</code> (600) per changed position at each checkpoint and <code>ExposureSnapshot</code> (402) per account, which is what the risk engine's start-of-session load consumes. Exposed through shared memory with a seqlock for the market maker and margin engine. Applies <code>CorporateAction</code> at <code>effectiveSeq</code> (the split fixture already exists), so every consumer adjusts at the same sequence number.</dd>
+<dt>Cold ledger</dt><dd>A Go service over Postgres, event-sourced from the same log: lots (<code>LotUpdate</code>), FIFO and specific-identification for tax, average cost for the desk view, realised and unrealised P&amp;L, fees, marks, and the full history. Position at any sequence number is a query. End-of-day snapshot; restart replays from the last one.</dd>
+<dt>Reconciliation</dt><dd>The clearing firm's position and cash files are loaded daily and diffed against the ledger. Every break becomes a ticket with an owner and a deadline; the ageing report is the operations dashboard. This is the first cold-path service to build because self-clearing and every examination depend on it.</dd>
+<dt>Tests</dt><dd>Fold determinism between hot view and ledger (same log, same positions). Corporate-action tests for split, reverse split, symbol change and cash dividend. Lot accounting property tests. A break-detection test with a deliberately wrong clearing file.</dd>
+<dt>Size</dt><dd>Hot view 1 500 lines, two weeks. Ledger and reconciliation 5 000 lines of Go, six weeks.</dd>
+</dl>
+
+<h2 id="c-infra">Platform and failover <span class="path hot">core/seq</span> <span class="path cold">ops/</span></h2>
+<dl class="spec">
+<dt>Transport</dt><dd>Replace the in-process <code>BroadcastRing</code> with Aeron IPC for components on one host and Aeron UDP multicast to the standby host, behind the existing <code>Sequencer</code> and <code>StreamReader</code> interfaces. The ordering logic, batching, watermarks and checkpoints do not change; that was the point of the interfaces. Keep our journal with segment rotation as the durable record, or adopt Aeron Archive for it once the multi-host replay path is exercised. The decision is a deployment one and is left open below.</dd>
+<dt>Standby</dt><dd>A standby sequencer consumes the primary's fan-out and journals independently. Promotion: the control plane sequences nothing; it stops the primary's publication, the standby verifies its journal tail against the last <code>CheckpointAck</code>s, and resumes from its last durable sequence. Any frame the primary accepted but the standby never received is lost by design and is visible as a gap to every consumer, which is why gateways only acknowledge clients after the frame is on the fan-out. The procedure is drilled monthly, not merely written.</dd>
+<dt>Engine restart</dt><dd>An engine loads the snapshot, verifies the hash against <code>SessionStart</code>, applies from its last checkpoint through the reader's journal refill, compares its hash to the <code>CheckpointAck</code> it wrote, and only then reports <code>Live</code> in <code>ComponentStatus</code>. Target under thirty seconds at ten million core messages a day.</dd>
+<dt>Hot-path hygiene</dt><dd>Isolated cores, huge pages, NUMA-local memory, no syscalls on trading threads, logging through a lock-free ring drained elsewhere, OpenOnload on the NICs. A latency histogram per stage is written to the telemetry stream as <code>LatencySample</code> every second; a Prometheus exporter and Grafana dashboards read it; alerts are on the 99.9th percentile.</dd>
+<dt>Tracing</dt><dd>A <code>tools/trace</code> command follows the <code>causeSeq</code> chain for an order and renders the waterfall with real timestamps, exporting OpenTelemetry spans. Determinism as a metric: a divergence between any engine's <code>CheckpointAck</code> and the standby's is a page.</dd>
+<dt>Security</dt><dd>Mutual TLS or dedicated lines for client sessions; keys in an HSM once the firm is regulated; signed configuration; four-eyes approval on any <code>LimitUpdate</code> or <code>KillSwitch</code> release through the control plane; an immutable audit of operator actions written as sequenced messages so it is in the same log as their effect.</dd>
+<dt>Tests</dt><dd>Two-process gap refill and failover drills in CI. A tail-latency gate per stage against a stored baseline. A chaos scenario in the simulator that kills the primary mid-batch and checks that no accepted order is lost and no unaccepted order is sent.</dd>
+<dt>Size</dt><dd>Aeron binding and segmented journal 2 500 lines, four weeks. Standby and promotion 1 500 lines plus runbooks, three weeks. Telemetry and trace tooling 2 000 lines, three weeks.</dd>
+</dl>
+
+<h2 id="c-mm">Market maker and internaliser <span class="path hot">core/mm</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Quote continuously in a chosen universe, internalise client flow with logged price improvement, and keep inventory near flat under hard limits. Phase three in document 1's roadmap; designed here so the router's <em>InternalizeFirst</em> step and the position keeper's shared view are built with it in mind.</dd>
+<dt>Engine</dt><dd>One engine per market-data stream (a symbol range), implementing the strategy interface from document 2. Fair value per symbol is a microprice from the top-of-book imbalance adjusted by short-horizon signals delivered as <code>Signal</code> messages: trade-flow imbalance, a correlated ETF move, realised volatility. Quote placement follows an inventory-aware model: reservation price shifted against inventory, spread widened with volatility and hedging cost, both bounded by <code>ModelParams</code> fitted offline and sequenced, so the live engine is arithmetic only. Quotes go out as <code>QuoteIntent</code>; the venue gateway maps them to the venue's quote or replace messages. Adverse-selection defence pulls or widens on <code>VenueStatus</code>, scheduled news windows from the calendar, and a <code>ToxicityScore</code> per counterparty class from the cold path.</dd>
+<dt>Inventory</dt><dd><code>InventoryLimit</code> per symbol, sector and firm is hard: a breach flattens through the router with a liquidation strategy tag, never by widening and hoping. Position comes from the position keeper's shared view at the sequence number of the last fill.</dd>
+<dt>Internaliser</dt><dd>When a client <code>NewOrder</code> arrives in a quoted symbol and the client allows it, the internaliser checks the engine's live quote against the NBBO, and fills the client at a price that improves the NBBO by at least the configured minimum, in whole increments, up to the quoted size. It sequences <code>InternalizeDecision</code> with the improvement in money terms and an <code>ExecReport</code> with liquidity <em>Internalized</em>; otherwise it declines with a reason and the router continues. The conflict of interest is real, so every decision is on the log and the daily compliance job checks that improvement was delivered on every internalised fill.</dd>
+<dt>Compliance</dt><dd>The bona fide market-making exemption from locates is used only while the engine is quoting continuously in the symbol; the compliance service verifies from the log each day and revokes the flag when the criteria fail.</dd>
+<dt>Tests</dt><dd>Quoting replay against recorded days with stored intents; inventory limit breach drills; internaliser price-improvement invariant over random flow; toxicity response scenarios.</dd>
+<dt>Size</dt><dd>Engine 4 000 lines, internaliser 1 000, research pipeline 3 000 lines of Python; twelve weeks with a quantitative researcher.</dd>
+</dl>
+
+<h2 id="c-loan">Stock loan <span class="path cold">services/stockloan</span></h2>
+<dl class="spec">
+<dt>Purpose</dt><dd>Locates that name a source, an easy-to-borrow list that is true, borrow booking on every short execution, and the loan lifecycle without creating a fail. The messages exist and the risk engine already consumes them; the service that writes them does not.</dd>
+<dt>Availability ledger</dt><dd>Postgres, per symbol: sources (firm box, client margin inventory eligible for rehypothecation with per-account limits, external lenders with offered quantity and rate, agent lender programmes) and reservations (locates granted and unused, borrows booked). Available quantity is a derived query, never a cached number.</dd>
+<dt>Locate engine</dt><dd>The fast part, in Go with an in-memory copy of the ledger rebuilt from its own event log: a <code>LocateRequest</code> is answered with <code>LocateGranted</code> (with <code>sourceId</code>, quantity, rate, expiry at end of day and a reservation id) or <code>LocateDenied</code> within one millisecond. Partial grants are allowed and flagged. Each morning the ETB list is regenerated from verified availability and published as <code>ListUpdate</code>s; an intraday borrow failure removes the symbol from the list immediately. There is no assume-available path.</dd>
+<dt>Lifecycle</dt><dd>A short-sale <code>ExecReport</code> converts the reservation into a borrow request to the source; confirmation sequences <code>BorrowBooked</code> with rate and collateral terms; failure sequences <code>BorrowFailed</code>, alerts the desk and starts the buy-in workflow before settlement. Recalls search for replacement supply then force a buy-in by the deadline. Collateral is marked daily; <code>RateUpdate</code>s feed research and the market maker's risk inputs. Fails-to-deliver run a Reg SHO close-out clock per position, and threshold securities are handled through the list.</dd>
+<dt>Integration</dt><dd>Lender platforms and the clearing firm's stock-loan service through adapters; the ledger never trusts an external quantity until a borrow confirms.</dd>
+<dt>Tests</dt><dd>Locate accounting to the unit (granted, consumed, returned on cancel, expired) matching the risk engine's view exactly. Borrow-failure drill removing a symbol from ETB and rejecting the next short. Recall and buy-in timelines. Reg SHO close-out clock property tests.</dd>
+<dt>Size</dt><dd>About 8 000 lines of Go; ten weeks plus lender integrations.</dd>
+</dl>
+
+<h2 id="c-margin">Margin engine <span class="path cold">services/margin</span></h2>
+<dl class="spec">
+<dt>Design</dt><dd>A Go rules service over the position keeper's view: Reg T initial and maintenance for US equities, house rules above them, concentration and hard-to-borrow add-ons per <code>marginClass</code>, portfolio margin later. Recomputes per account on a timer of seconds and on a large mark move, and sequences <code>BuyingPowerUpdate</code>, which the risk engine already treats as a full re-base of its incremental figure. Calls are <code>MarginCall</code> workflow objects with deadlines and escalation; forced liquidation is a <code>NewOrder</code> with a liquidation strategy id through the normal risk and router path, so it is auditable like any other order.</dd>
+<dt>Tests</dt><dd>Worked Reg T examples from the rule; a drift test that the incremental buying power in the risk engine and the full recompute never differ by more than the fills in flight; call and liquidation timelines in the simulator.</dd>
+<dt>Size</dt><dd>About 4 000 lines; six weeks. Portfolio margin is a separate project.</dd>
+</dl>
+
+<h2 id="c-post">Post-trade, cash ledger and clearing <span class="path cold">services/posttrade</span></h2>
+<dl class="spec">
+<dt>Design</dt><dd>Trade capture from the log; allocation of institutional blocks to sub-accounts by FIX allocation or the client's post-trade platform; a clearing-firm adapter that produces the trade, position and cash files and consumes the firm's breaks; a double-entry cash ledger per account and currency where every movement references a log event or an approved manual entry; corporate-action cash processing, dividends, interest on cash and margin, fee accruals, month-end close. The adapter boundary is drawn so self-clearing later replaces the adapter, not the pipeline.</dd>
+<dt>T+1</dt><dd>Allocations and affirmations complete on trade date; the end-of-day job refuses to close with an unaffirmed institutional trade and pages operations.</dd>
+<dt>Tests</dt><dd>Ledger invariants (every account balances, every entry has a cause). A full-day simulated flow through allocation to the clearing files, diffed against a stored baseline. Reconciliation break drills.</dd>
+<dt>Size</dt><dd>About 10 000 lines of Go; twelve weeks. Reconciliation is shared with the position keeper's ledger.</dd>
+</dl>
+
+<h2 id="c-comp">Compliance and reporting <span class="path cold">services/compliance</span></h2>
+<dl class="spec">
+<dt>CAT</dt><dd>An extraction from the log: every order event with the linkages CAT requires, derived from <code>causeSeq</code> and the parent and child ids; the firm's and venues' identifiers carried verbatim. Submission through a reporting agent. Validated against the CAT specification's test cases and against the venue's own reported events.</dd>
+<dt>Best execution</dt><dd>Per-order TCA against the NBBO at arrival and at each child release, computed from <code>ExecReport.nbboBid</code>/<code>nbboAsk</code> and <code>RouteDecision</code>; quarterly 605 under the amended rule and 606 reports; best-ex committee packs. The same TCA computes the venue scorecards that go back to the router as <code>VenueScorecard</code>, closing the loop.</dd>
+<dt>Reg SHO</dt><dd>Locate evidence per short sale (the <code>locateId</code> chain to <code>LocateGranted</code> and its source), close-out tracking from the stock-loan service, bona fide market-making validation, Rule 201 handling records from the OMS re-price flag.</dd>
+<dt>Surveillance</dt><dd>Buy a recognised package in year one; feed it from the log over Kafka or NATS with the Go codec. Build the one check that matters most for a broker with its own market maker: front-running of client orders by the market maker, which the log makes provable by ordering.</dd>
+<dt>Retention</dt><dd>Daily journals and captures written once to immutable storage for the required period, with a retrieval drill each quarter.</dd>
+<dt>Size</dt><dd>CAT and best-ex 6 000 lines of Go and Python; eight weeks. The surveillance feed two weeks.</dd>
+</dl>
+
+<h2 id="c-control">Control plane and security master service <span class="path cold">services/control</span> <span class="path cold">services/secmaster</span></h2>
+<dl class="spec">
+<dt>Control plane</dt><dd>Configuration as code, versioned and signed. The component table (already in the snapshot) is its registry. It sequences <code>LimitUpdate</code>, <code>KillSwitch</code>, <code>StrategyParam</code>, <code>StrategyStart</code>/<code>Stop</code> and <code>RoutingProfileUpdate</code> after four-eyes approval, and publishes the day's snapshot manifest without which no engine starts. Deployments start the new instance replaying the log in shadow, then cut over at a sequence number. The kill switch is one sequenced message and one physical button on the trading floor.</dd>
+<dt>Security master</dt><dd>The Postgres bitemporal master and the nightly pipeline from document 2, producing the snapshot with the tools that already exist. Ingest exchange symbol files, the SIP end-of-day, a vendor descriptive feed, CUSIP and FIGI resolution, corporate actions from the clearing firm and a vendor with two-source agreement, threshold lists, the stock-loan output and the compliance restricted list; validate; publish the manifest.</dd>
+<dt>Size</dt><dd>Control plane 5 000 lines of Go plus an operator UI; eight weeks. Security master pipeline 4 000 lines of Python and Go; six weeks.</dd>
+</dl>
+
+<h2 id="criteria">Acceptance criteria</h2>
+<p>The competitive claims as measurements. A component is done when its row is green in CI or in a drill, not when its code is merged.</p>
+<div class="tablewrap">
+<table>
+<tr><th>Claim</th><th>Measurement</th><th>Threshold</th><th>Where it is proven</th></tr>
+<tr><td>Internal latency</td><td>NIC ingress to venue wire for an agency order, in the simulator with real protocols</td><td class="num">p50 ≤ 11 µs, p99.9 ≤ 40 µs</td><td>CI latency gate; published monthly to clients from production telemetry</td></tr>
+<tr><td>Determinism</td><td>Checkpoint hash divergences across primary, standby and cold replay</td><td class="num">0 over 60 recorded days</td><td>Simulator golden runs; production alert</td></tr>
+<tr><td>Best execution</td><td>Parent orders with a <code>RouteDecision</code> carrying a rejected alternative; fills with NBBO recorded</td><td class="num">100 %</td><td>Compliance job daily; 605 and 606 generated with no manual step</td></tr>
+<tr><td>Market access</td><td>Orders reaching a venue gateway without a sequenced accept</td><td class="num">0, structurally</td><td>Gateway property test; production alert</td></tr>
+<tr><td>Kill switch</td><td>Sequenced <code>KillSwitch</code> to last cancel on the wire</td><td class="num">≤ 100 µs</td><td>Simulator drill; monthly production test in a test symbol</td></tr>
+<tr><td>Locate integrity</td><td>Short sales whose <code>locateId</code> resolves to a <code>LocateGranted</code> with a source</td><td class="num">100 %</td><td>Reg SHO job daily</td></tr>
+<tr><td>Position drift</td><td>Unexplained breaks at T+1 reconciliation</td><td class="num">0 for 20 consecutive days before go-live</td><td>Reconciliation dashboard</td></tr>
+<tr><td>Failover</td><td>Sequencer promotion time; accepted orders lost</td><td class="num">≤ 2 s; 0</td><td>Monthly drill</td></tr>
+<tr><td>Restart</td><td>Engine cold start to <code>Live</code> at 10 M core messages a day</td><td class="num">≤ 30 s</td><td>CI drill</td></tr>
+<tr><td>Feed quality</td><td>Direct-feed NBBO ahead of SIP; gaps recovered without operator action</td><td class="num">measured, not thresholded, in year one</td><td>Telemetry</td></tr>
+</table>
+</div>
+
+<h2 id="plan">Build order</h2>
+<p>Each increment is a working, testable system. The order follows dependencies: nothing is built before the harness that tests it. Dates assume the team in document 1 is being assembled in parallel and the first two increments are done by a small core; the regulatory track runs alongside and usually sets the pace for go-live.</p>
+<div class="diagram" role="img" aria-label="Dependency diagram: v0.1 foundation feeds v0.2 simulator and OMS, then v0.3 market data, router and position keeper, then v0.4 gateways and platform, then v0.5 cold path, then v0.6 market maker and stock loan.">
+<svg viewBox="0 0 1100 330" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+<style>
+.bx{fill:var(--panel);stroke:var(--rule);stroke-width:1.2}
+.hb{fill:var(--hot-soft);stroke:var(--hot);stroke-width:1.4}
+.cb{fill:var(--cold-soft);stroke:var(--cold);stroke-width:1.4}
+.t{fill:var(--ink);font-size:13px;font-weight:600}
+.s{fill:var(--muted);font-size:11px}
+.ln{stroke:var(--muted);stroke-width:1.3;fill:none;marker-end:url(#ah3)}
+.lbl{fill:var(--hot);font-size:12px;font-weight:600}
+</style>
+</defs>
+<text x="20" y="28" class="lbl">v0.1 done</text>
+<rect x="20" y="40" width="150" height="120" rx="3" class="hb"/>
+<text x="30" y="62" class="t">Foundation</text>
+<text x="30" y="82" class="s">schema, codecs</text><text x="30" y="98" class="s">snapshot, refdata</text><text x="30" y="114" class="s">sequencer core</text><text x="30" y="130" class="s">pre-trade risk</text>
+<text x="200" y="28" class="lbl">v0.2  Oct–Nov 2026</text>
+<rect x="200" y="40" width="150" height="120" rx="3" class="hb"/>
+<text x="210" y="62" class="t">Harness and OMS</text>
+<text x="210" y="82" class="s">debt fixes, schema v3</text><text x="210" y="98" class="s">simulator harness</text><text x="210" y="114" class="s">order manager</text><text x="210" y="130" class="s">loginspect, sanitizers</text>
+<text x="380" y="28" class="lbl">v0.3  Dec 2026–Jan 2027</text>
+<rect x="380" y="40" width="150" height="120" rx="3" class="hb"/>
+<text x="390" y="62" class="t">Market and routing</text>
+<text x="390" y="82" class="s">ITCH, SIP, book builder</text><text x="390" y="98" class="s">router, 3 strategies</text><text x="390" y="114" class="s">position keeper hot</text><text x="390" y="130" class="s">TCA loop</text>
+<text x="560" y="28" class="lbl">v0.4  Feb–Mar 2027</text>
+<rect x="560" y="40" width="150" height="120" rx="3" class="hb"/>
+<text x="570" y="62" class="t">Edges and platform</text>
+<text x="570" y="82" class="s">OUCH gateway + twin</text><text x="570" y="98" class="s">binary client gateway</text><text x="570" y="114" class="s">Aeron, standby, telemetry</text><text x="570" y="130" class="s">first end-to-end order</text>
+<text x="740" y="28" class="lbl">v0.5  Apr–Jun 2027</text>
+<rect x="740" y="40" width="150" height="120" rx="3" class="cb"/>
+<text x="750" y="62" class="t">Cold path, beta</text>
+<text x="750" y="82" class="s">FIX, ledger, recon</text><text x="750" y="98" class="s">clearing adapter, margin</text><text x="750" y="114" class="s">CAT, 605/606, control</text><text x="750" y="130" class="s">API beta clients</text>
+<text x="920" y="28" class="lbl">v0.6  H2 2027</text>
+<rect x="920" y="40" width="150" height="120" rx="3" class="hb"/>
+<text x="930" y="62" class="t">Revenue engines</text>
+<text x="930" y="82" class="s">market maker</text><text x="930" y="98" class="s">internaliser</text><text x="930" y="114" class="s">stock loan desk</text><text x="930" y="130" class="s">more venues, UK/EU</text>
+<path d="M170 100H198" class="ln"/><path d="M350 100H378" class="ln"/><path d="M530 100H558" class="ln"/><path d="M710 100H738" class="ln"/><path d="M890 100H918" class="ln"/>
+<rect x="20" y="200" width="1050" height="100" rx="3" class="bx"/>
+<text x="30" y="222" class="t">Runs alongside from now</text>
+<text x="30" y="244" class="s">Broker-dealer registration, clearing firm selection and onboarding, co-location and cross-connects, market-data licences, venue certification queues,</text>
+<text x="30" y="260" class="s">security master vendor contracts, surveillance vendor, FIX engine licence decision, hiring against document 1's team plan.</text>
+<text x="30" y="286" class="s">These set the go-live date more than the code does. Start them in v0.2, not v0.5.</text>
+</svg>
+</div>
+<ol class="phases">
+<li><h4>v0.2 Harness and OMS <span class="tag">October to November 2026</span></h4>
+<p>Pay the debt: risk fixes, schema v3 additions, segmented journal, template reader, <code>CheckpointAck</code>, frame flags, Go emitter, <code>loginspect</code>, sanitizer and fuzz CI. Then the simulator harness with VenueSim, FeedSim and ClientSim, and the OMS tested through it. Exit: a synthetic day flows client order → risk → OMS → simulated venue → client report, replayed bit for bit.</p></li>
+<li><h4>v0.3 Market and routing <span class="tag">December 2026 to January 2027</span></h4>
+<p>ITCH and SIP handlers with capture, the book builder and shared-memory view, <code>BookSnapshot</code>, the router with Sweep, DarkFirst and PassivePost, the position keeper's hot view, and the TCA pipeline producing scorecards. Exit: recorded Nasdaq days replay through the full hot path with best-execution reports generated from the log.</p></li>
+<li><h4>v0.4 Edges and platform <span class="tag">February to March 2027</span></h4>
+<p>OUCH venue gateway with its simulator twin and the accept check, the binary client gateway, Aeron IPC between processes, standby sequencer and promotion drill, telemetry and the trace tool. Exit: a real order from a test client to Nasdaq's test environment and back, with a p99.9 measured on the way.</p></li>
+<li><h4>v0.5 Cold path and beta <span class="tag">April to June 2027</span></h4>
+<p>FIX gateway, cold ledger and reconciliation, clearing-firm adapter, margin engine, CAT extraction, 605 and 606, control plane and security master pipeline. Exit: twenty consecutive clean reconciliation days in a parallel run, then API beta clients, subject to registration.</p></li>
+<li><h4>v0.6 Revenue engines <span class="tag">Second half of 2027</span></h4>
+<p>Market maker and internaliser in a small liquid universe, the stock-loan desk with the locate engine feeding risk, Pillar and BOE gateways, then UK and EU venues and reporting. This is where document 1's second and third revenue lines start.</p></li>
+</ol>
+<div class="tablewrap">
+<table>
+<tr><th>Component</th><th>Estimate</th><th>Depends on</th></tr>
+<tr><td>Debt and schema v3</td><td class="num">2 weeks</td><td>nothing</td></tr>
+<tr><td>Simulator harness</td><td class="num">5 weeks</td><td>schema v3</td></tr>
+<tr><td>Order manager</td><td class="num">4 weeks</td><td>harness</td></tr>
+<tr><td>Market data (ITCH, SIP, builder)</td><td class="num">10 weeks</td><td>harness; can start in parallel with the OMS</td></tr>
+<tr><td>Router and TCA loop</td><td class="num">5 weeks</td><td>OMS, book view</td></tr>
+<tr><td>Position keeper hot view</td><td class="num">2 weeks</td><td>OMS</td></tr>
+<tr><td>OUCH gateway and twin</td><td class="num">4 weeks</td><td>OMS, harness</td></tr>
+<tr><td>Binary client gateway</td><td class="num">3 weeks</td><td>OMS</td></tr>
+<tr><td>Aeron, standby, telemetry, trace</td><td class="num">10 weeks</td><td>none; parallel track</td></tr>
+<tr><td>FIX gateway (licensed engine)</td><td class="num">4 weeks</td><td>binary gateway</td></tr>
+<tr><td>Ledger, reconciliation, post-trade</td><td class="num">12 weeks</td><td>Go codec, position keeper</td></tr>
+<tr><td>Margin engine</td><td class="num">6 weeks</td><td>position keeper</td></tr>
+<tr><td>CAT, best-ex, Reg SHO, surveillance feed</td><td class="num">10 weeks</td><td>OMS, router, Go codec</td></tr>
+<tr><td>Control plane, security master pipeline</td><td class="num">14 weeks</td><td>Go codec</td></tr>
+<tr><td>Market maker and internaliser</td><td class="num">12 weeks</td><td>book view, position keeper, router</td></tr>
+<tr><td>Stock loan</td><td class="num">10 weeks</td><td>position keeper, ledger</td></tr>
+<tr class="total"><td>Total engineering</td><td class="num">≈ 113 engineer-weeks</td><td>about nine months for the hot path and platform with three engineers; the cold path in parallel with two or three more</td></tr>
+</table>
+</div>
+
+<h2 id="risks">Open decisions and risks</h2>
+<ul>
+<li><strong>Aeron or our own transport.</strong> Aeron gives IPC, multicast and archive for free and is proven; our ring and journal are two thousand lines we fully understand. Recommendation: Aeron for transport now, our journal until Aeron Archive's replay is exercised across hosts in v0.4, then decide. The interfaces make the choice reversible.</li>
+<li><strong>FIX engine licence.</strong> Four weeks with a licensed engine against twelve or more without, and correctness under resend and gap scenarios is where in-house engines fail. Recommendation: license, and keep the binary protocol as the latency product.</li>
+<li><strong>Go for the cold path.</strong> The target profile says Go; nothing in the repo is Go yet and the emitter does not exist. Decide before the ledger starts, because it is the first cold service. Python would be faster to write and slower to operate.</li>
+<li><strong>Money units.</strong> Schema v3 is the moment to move aggregates to 1e-4 units. Doing it later means a second migration of every cold-path table.</li>
+<li><strong>Venue set at go-live.</strong> Nasdaq, NYSE and Cboe cover the lit majority; the ATS list determines the DarkFirst strategy's value and each needs a FIX session and certification. Pick three ATSs early because their queues are long.</li>
+<li><strong>Market maker placement.</strong> Same process as the router per symbol range, or its own. Same process saves a hop on internalisation; separate is easier to kill. Recommendation: separate process, same host, shared-memory book view; the hop is under a microsecond.</li>
+<li><strong>Regulatory dates.</strong> Rule 605 amendments, the Regulation NMS tick and fee changes, and T+1 in the UK and EU have compliance dates that have moved and may move again. The tick tables, fee schedules and calendars are data so the code does not care; the compliance calendar does. Confirm with counsel before each phase gate.</li>
+<li><strong>The team.</strong> Everything above assumes document 1's staffing. With one or two engineers the order stays the same and the dates roughly double; the simulator and OMS are still the right next step because they are what make the rest cheap.</li>
+</ul>
+
+<footer>Design prepared September 2026 against v0.1.0 of the repository. Line counts and weeks are planning estimates. Latency figures are targets to be measured in the simulator and then in production. Regulatory references are to US rules and their compliance dates should be confirmed with counsel before each phase gate.</footer>
+</main>
+</div>
+</body>
+</html>
