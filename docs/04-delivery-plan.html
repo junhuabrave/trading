@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delivery plan to go-live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF1F4; --panel:#FFFFFF; --ink:#1B2430; --muted:#5C6773; --rule:#C9D0D8;
+  --hot:#C8781C; --hot-soft:#F6E4CC; --cold:#2E7D7A; --cold-soft:#D4E9E7;
+  --warn:#9A3B2B; --warn-soft:#F3DDD8;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+    --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+    --warn:#E07A66; --warn-soft:#3B1F1A;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#14181D; --panel:#1C2229; --ink:#E6EAEE; --muted:#9AA5B1; --rule:#343C46;
+  --hot:#E2954A; --hot-soft:#3A2A16; --cold:#5FB3AE; --cold-soft:#173634;
+  --warn:#E07A66; --warn-soft:#3B1F1A;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:17px;line-height:1.6}
+h1,h2,h3,h4{font-family:"Bitter","Georgia",serif;line-height:1.2;margin:0}
+h1{font-size:2.4rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.65rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:2px solid var(--ink)}
+h3{font-size:1.2rem;font-weight:600;margin-top:2rem}
+h4{font-size:1rem;font-weight:600;margin-top:1.2rem}
+p{margin:.8rem 0;max-width:70ch}
+ul,ol{max-width:70ch;padding-left:1.3rem}
+li{margin:.3rem 0}
+a{color:var(--cold)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--hot);outline-offset:2px}
+code{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.92em;background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:0 .3em}
+pre{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.5;max-width:100%}
+pre code{border:0;padding:0;background:none}
+.wrap{display:grid;grid-template-columns:230px minmax(0,1fr);gap:3rem;max-width:1180px;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+nav.toc{position:sticky;top:1.5rem;align-self:start;font-size:.88rem;line-height:1.45}
+nav.toc ol{list-style:none;padding:0;margin:0}
+nav.toc li{margin:.25rem 0}
+nav.toc a{color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+nav.toc .grp{margin-top:1rem;color:var(--ink);font-weight:600}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:1.5rem}nav.toc{position:static;border-bottom:1px solid var(--rule);padding-bottom:1rem}nav.toc ol{columns:2}}
+header.hero{margin-bottom:2rem}
+header.hero .sub{font-size:1.15rem;color:var(--muted);max-width:62ch;margin-top:.8rem}
+.legend{display:flex;gap:1.6rem;flex-wrap:wrap;margin:1.2rem 0 .4rem;font-size:.9rem;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:.85em;height:.85em;border-radius:2px;margin-right:.45em;vertical-align:-.08em}
+.legend .h::before{background:var(--hot)} .legend .c::before{background:var(--cold)}
+.path{display:inline-block;font-size:.72rem;font-weight:600;padding:.12rem .5rem;border-radius:3px;vertical-align:.25em;margin-left:.5rem;letter-spacing:.01em}
+.path.hot{background:var(--hot-soft);color:var(--hot)} .path.cold{background:var(--cold-soft);color:var(--cold)}
+.note{border-left:4px solid var(--hot);background:var(--panel);padding:.9rem 1.1rem;margin:1.4rem 0;max-width:72ch;border-radius:0 4px 4px 0}
+.note.risk{border-left-color:var(--warn)}
+.note p{margin:.4rem 0}
+.diagram{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.6rem;margin:1.2rem 0;overflow-x:auto}
+.diagram svg{width:100%;min-width:760px;height:auto;display:block;font-family:"IBM Plex Sans",sans-serif}
+.spec{display:grid;grid-template-columns:150px minmax(0,1fr);gap:.5rem 1.2rem;margin:1rem 0;max-width:78ch}
+.spec dt{color:var(--muted);font-size:.9rem;font-weight:500;padding-top:.15rem}
+.spec dd{margin:0}
+.spec dd ul{margin:0;padding-left:1.1rem}
+@media (max-width:600px){.spec{grid-template-columns:1fr}.spec dt{margin-top:.6rem}}
+.tablewrap{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;font-size:.92rem;min-width:560px}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:600;border-bottom:2px solid var(--ink)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.total td{font-weight:600;border-top:2px solid var(--ink)}
+.phases{counter-reset:ph;list-style:none;padding:0;max-width:78ch}
+.phases>li{counter-increment:ph;display:grid;grid-template-columns:3rem minmax(0,1fr);gap:.8rem;padding:1rem 0;border-bottom:1px solid var(--rule)}
+.phases>li::before{content:counter(ph);font-family:"Bitter",serif;font-size:1.8rem;font-weight:700;color:var(--hot);line-height:1}
+.phases h4{margin-top:.15rem}
+.phases p{margin:.35rem 0}
+.tag{font-size:.8rem;color:var(--muted)}
+footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:var(--muted);font-size:.88rem}
+
+/* work-item tables and track headers, specific to this document */
+.track{display:flex;align-items:baseline;gap:.8rem;flex-wrap:wrap;margin-top:2.6rem}
+.track h3{margin-top:0}
+.pill{font-size:.72rem;font-weight:600;padding:.15rem .55rem;border-radius:3px;letter-spacing:.02em;white-space:nowrap}
+.pill.block{background:var(--warn-soft);color:var(--warn)}
+.pill.later{background:var(--cold-soft);color:var(--cold)}
+.pill.done{background:var(--hot-soft);color:var(--hot)}
+.items{width:100%;min-width:680px}
+.items th,.items td{padding:.5rem .6rem;vertical-align:top}
+.items td.id{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:.85rem;white-space:nowrap;font-weight:600}
+.items td.dep{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:.82rem;color:var(--muted);white-space:nowrap}
+.items td.wk{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--muted)}
+.items tr.blocked td.id{color:var(--warn)}
+.rule{border-left:4px solid var(--cold);background:var(--panel);padding:.9rem 1.1rem;margin:1.2rem 0;max-width:72ch;border-radius:0 4px 4px 0}
+.rule h4{margin-top:0}
+.rule p{margin:.4rem 0}
+.gate{display:grid;grid-template-columns:1.6rem minmax(0,1fr);gap:.6rem .8rem;max-width:78ch;margin:1rem 0}
+.gate .box{width:1.1rem;height:1.1rem;border:2px solid var(--muted);border-radius:3px;margin-top:.25rem}
+.gate .box.on{background:var(--hot);border-color:var(--hot)}
+.gate div p{margin:0 0 .3rem}
+.gate .who{font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+<ol>
+<li><a href="#use">How to use this</a></li>
+<li><a href="#state">What is already built</a></li>
+<li><a href="#rules">Rules for parallel work</a></li>
+<li class="grp">Work items</li>
+<li><a href="#t-md">Market data</a></li>
+<li><a href="#t-rt">Router</a></li>
+<li><a href="#t-vg">Venue gateways</a></li>
+<li><a href="#t-cg">Client gateways</a></li>
+<li><a href="#t-pk">Position keeper</a></li>
+<li><a href="#t-pl">Platform</a></li>
+<li><a href="#t-cp">Control plane, security master</a></li>
+<li><a href="#t-mg">Margin</a></li>
+<li><a href="#t-co">Post-trade, compliance</a></li>
+<li><a href="#t-sl">Stock loan</a></li>
+<li><a href="#t-core">Core follow-ups</a></li>
+<li><a href="#t-mm">Market making</a></li>
+<li class="grp">Delivery</li>
+<li><a href="#tracks">Tracks and staffing</a></li>
+<li><a href="#path">Critical path</a></li>
+<li><a href="#nonsw">The non-software track</a></li>
+<li><a href="#gates">Go-live gates</a></li>
+<li><a href="#risks">What will go wrong</a></li>
+</ol>
+</nav>
+
+<main>
+<header class="hero">
+<h1>Delivery plan to go-live</h1>
+<p class="sub">Document 4. Every remaining task as an assignable work item with its dependencies, its size, and the test that says it is finished. Written so several engineers can work in parallel against the contracts that already exist, and so the things that actually gate the launch date stay visible.</p>
+<div class="legend"><span class="h">Blocks go-live</span><span class="c">After go-live</span></div>
+</header>
+
+<h2 id="use">How to use this</h2>
+<p>Documents 1 and 2 are the design. Document 3 is the gap analysis and the architecture of each missing component; it is what an engineer reads before starting an item. This document is the delivery plan: the same work cut into pieces one person can own, with the order they have to happen in and the evidence that closes them.</p>
+<p>Every item has an id (<code>MD-3</code>, <code>RT-2</code>), the items it depends on, a size in engineer-weeks for someone who has read document 3 and is comfortable in the codebase, and a <em>done when</em> that is a command or a check, not an opinion. An item is finished when its <em>done when</em> is green in CI on the main branch, not when the code is merged.</p>
+<p>Sizes assume one engineer per item, with review. They do not include the ramp-up: budget a week for the first item anyone takes, spent reading document 2 and 3, running <code>make test</code>, and walking one order through the simulator with <code>tools/loginspect.py chain</code>.</p>
+<div class="note"><p><strong>The estimate to take seriously.</strong> The engineering below is about 210 engineer-weeks of blocking work, which is roughly nine months for a team of six on the hot path and cold path together. The regulatory, clearing and venue-certification track in <a href="#nonsw">the non-software section</a> runs twelve to eighteen months from a standing start and is almost always what sets the date. Start that track first, whatever the engineering plan says.</p></div>
+
+<h2 id="state">What is already built</h2>
+<p>At <code>7abd21a</code>, on main, with three CI jobs green. This is the ground everything below stands on, and the part nobody needs to redo.</p>
+<div class="tablewrap">
+<table>
+<tr><th>Piece</th><th>State</th><th>Where</th></tr>
+<tr><td>Schema and codecs</td><td>72 messages at v3, C++, Python and Go, append-only checker across v1 to v3, layout rules enforced at generation</td><td><code>schema/</code>, <code>tools/sbegen.py</code></td></tr>
+<tr><td>Security master snapshot</td><td>Build, verify, diff to sequenced messages, mmap loader with per-section hashes, engine-side struct-of-arrays view</td><td><code>tools/snapshot.py</code>, <code>core/refdata/</code></td></tr>
+<tr><td>Sequencer</td><td>Segmented journal with torn-tail recovery, broadcast ring, atomic batches, checkpoints and acknowledged state hashes, gap refill, watermarks</td><td><code>core/seq/</code></td></tr>
+<tr><td>Pre-trade risk</td><td>29 reject reasons, sliding rate window, duplicate window, replace evaluation, locates, exposure, buying power; replay-verified</td><td><code>core/risk/</code></td></tr>
+<tr><td>Order manager</td><td>Arena, transition table, fees, NBBO on reports, cancel, replace, re-route budget, kill, bust; replay regenerates every client report byte for byte</td><td><code>core/oms/</code></td></tr>
+<tr><td>Simulator harness</td><td>Venue simulator with sessions and drop copy, feed and client simulators, seven scenarios and drills with stored baselines, cold-replay verifier</td><td><code>sim/</code></td></tr>
+<tr><td>Benchmarks and guards</td><td>Component and front-to-back benchmarks, per-host baselines with regression gates, allocation and syscall guards, reason coverage</td><td><code>tools/bench.py</code>, <code>core/util/</code></td></tr>
+<tr><td>Tooling and CI</td><td>Log inspector, fuzzers for the two file parsers, gcc, clang with sanitizers, and Go jobs</td><td><code>tools/</code>, <code>.github/</code></td></tr>
+</table>
+</div>
+<p>Two stand-ins remain in the simulator and are explicitly marked as such: <code>sim/stub_router.hpp</code> (one venue, least-loaded session) and <code>sim/feed_sim.hpp</code> (synthetic book). Items <code>RT-1</code> and <code>MD-8</code> retire them.</p>
+
+<h2 id="rules">Rules for parallel work</h2>
+<p>These are what let six people work at once without breaking each other. They are not style preferences; each one has bitten this codebase or is the reason something in it is testable.</p>
+<div class="rule">
+<h4>The schema is a contract, and it is append-only</h4>
+<p>Adding a field or message is normal and cheap. Changing or reordering an existing one is not allowed, and <code>make check</code> will refuse it. New fields come out of a message's trailing padding so the block length never changes, carry <code>sinceVersion</code>, and default to zero meaning "unset". Bump the version, record the reason in <code>schema/CHANGELOG.md</code>, and freeze the previous copy under <code>schema/versions/</code>. Never edit <code>gen/</code>.</p>
+<p>Two people adding messages in the same week is fine; they pick template ids from different family blocks and the checker catches a collision.</p>
+</div>
+<div class="rule">
+<h4>Engines talk only through sequenced messages</h4>
+<p>No hot-path component calls another, shares memory with it, reads a clock, opens a socket, or touches a database. Everything it knows arrives as a frame; everything it decides leaves as a frame. That is what makes replay exact, and it is also what lets you develop your component against the simulator before the component that feeds it exists.</p>
+<p>If your component seems to need something that is not on the stream, the answer is a new message, not a side channel.</p>
+</div>
+<div class="rule">
+<h4>Every engine ships with a replay-determinism test</h4>
+<p>Same journal in, same state hash out, verified by a cold replay in the harness, and the engine answers each <code>Checkpoint</code> with a <code>CheckpointAck</code> carrying its hash. An engine without this is not finished, because nothing downstream can trust it and no failover can use it.</p>
+</div>
+<div class="rule">
+<h4>Every hot-path component ships with a benchmark row and a gate</h4>
+<p>Add your component's benchmark to <code>tools/bench.py</code>, record a baseline, and keep the allocation count at zero after warm-up. The gate is what stops the stack getting slower one reasonable-looking commit at a time. On a shared CI runner it is informational; on the pinned host it fails the build.</p>
+</div>
+<div class="rule">
+<h4>The simulator is where your component is tested, and you extend it</h4>
+<p>Do not write a bespoke harness. Add your scenario or drill to <code>sim/</code>, give it a stored baseline, and put it in <code>make test</code>. When your component needs something the simulator cannot yet do (a second venue, a dropped multicast line), extending the simulator is part of your item, not a separate project.</p>
+</div>
+<div class="rule">
+<h4>No allocation, no syscalls, no wall clock on the order path</h4>
+<p>Tables are open-addressing and reserved at construction (<code>core/util/flatmap.hpp</code>), time comes from the injected clock, and logging goes through a ring drained elsewhere. The benchmark's allocation counter and the strace check in CI enforce the first two.</p>
+</div>
+<div class="rule">
+<h4>Cold-path services are Go, and they consume the log</h4>
+<p>The generated Go codec is in <code>gen/go</code>. A cold service subscribes to the sequenced log and keeps its own state; it never queries another service for state that is on the log, and it is allowed to be slow but never to be wrong.</p>
+</div>
+<div class="rule">
+<h4>Reason codes are the vocabulary</h4>
+<p>Any new reject or decision reason goes in <code>schema/reasons.csv</code> and must be produced by at least one test; <code>tools/reason_coverage.py</code> in <code>make test</code> enforces it. A code nobody can trigger is either dead or untested.</p>
+</div>
+
+<h2 id="t-md">Market data <span class="path hot">core/md</span></h2>
+<div class="track"><h3>MD</h3><span class="pill block">Blocks go-live</span><span class="tag">36 engineer-weeks &middot; 2 engineers &middot; the longest pole in the engineering plan</span></div>
+<p>Design in document 3, market-data section. The governing decision is that we do not sequence market data: a normalised message is identified by <code>(feedId, venueSeq)</code>, which is what makes redundant handlers produce identical streams and lets a consumer fail over between them with no gap and no duplicate. <code>MD-11</code> changes the watermark identity across the whole codebase, so it lands early and its window is announced.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">MD-1</td><td>Feed registry: <code>FeedRecord</code> section written by the snapshot builder, loaded by the engine view, one entry per venue protocol per site with its lines and what it provides</td><td class="dep">&mdash;</td><td class="wk">1</td><td>Fixture snapshot carries feeds; loader round-trips them; <code>snapshot.py dump</code> prints them</td></tr>
+<tr class="blocked"><td class="id">MD-11</td><td>Watermark identity moves from <code>(streamId, seq)</code> to <code>(feedId, venueSeq)</code>: tracker, harness replay, every engine that records one. Coordinate: touches risk, OMS and the harness</td><td class="dep">MD-1</td><td class="wk">2</td><td>All seven simulator scenarios pass with regenerated baselines; replay still recomputes every decision</td></tr>
+<tr><td class="id">MD-2</td><td>Line receiver: one per multicast group or TCP line, NIC hardware timestamp into <code>originTs</code>, raw capture per feed per day</td><td class="dep">MD-1</td><td class="wk">3</td><td>Captures a simulated multicast day byte-exact; replaying the capture reproduces the same frames</td></tr>
+<tr><td class="id">MD-3</td><td>Line arbitrator: merge A and B by venue sequence, first arrival wins, gap detection, retransmit and snapshot recovery spliced in order, <code>FeedStatus</code> published</td><td class="dep">MD-2, MD-10</td><td class="wk">4</td><td>Drills pass: one line dropped, both lines gapped, a retransmit that itself gaps, duplicate packets; output is gap-free and identical across runs</td></tr>
+<tr><td class="id">MD-4</td><td>ITCH 5.0 decoder over MoldUDP64: order-reference table, level deltas with absolute quantity, trades, status, imbalance, <code>endOfPacket</code></td><td class="dep">MD-3</td><td class="wk">5</td><td>Golden test against a published Nasdaq sample day; book invariants hold; 3M messages per second per process in the benchmark</td></tr>
+<tr><td class="id">MD-5</td><td>SIP decoder (UTP and CTA) for the official NBBO, carried alongside the direct NBBO in <code>Nbbo</code></td><td class="dep">MD-3</td><td class="wk">3</td><td>Golden test against a sample day; direct-versus-SIP divergence is logged and queryable</td></tr>
+<tr><td class="id">MD-6</td><td>Per-feed journals keyed by venue sequence, segmented, with replay to a watermark; both the arbitrated packet stream and the decoded frames</td><td class="dep">MD-3</td><td class="wk">2</td><td>Replay to an arbitrary watermark is exact and seeks rather than scans; fuzz target for the recovery scan</td></tr>
+<tr><td class="id">MD-7</td><td>Source selector: dedupe identical publishers by identity, choose between direct, SIP and vendor by policy, publish the quality level, sequence <code>MdSourceSwitch</code> on a change</td><td class="dep">MD-4, MD-5, MD-6</td><td class="wk">3</td><td>Publisher killed mid-packet: zero gap, zero duplicate over a million messages. Direct stalls: SIP takes over, switch appears on the core stream, replay reproduces it</td></tr>
+<tr><td class="id">MD-8</td><td>Book builder and shared-memory view: flat ladders per symbol and venue, consolidated view, synthetic NBBO, seqlock reader. Retires <code>sim/feed_sim.hpp</code> as the source of truth</td><td class="dep">MD-7</td><td class="wk">5</td><td>Book invariants under a recorded day; packet to published delta under 2&nbsp;&micro;s at p50 in the benchmark; readers never block the writer</td></tr>
+<tr><td class="id">MD-9</td><td><code>BookSnapshot</code> published periodically per symbol; late-joining consumer loads the snapshot and applies deltas from there</td><td class="dep">MD-8</td><td class="wk">2</td><td>A consumer started mid-day reaches the same book as one started at the open, verified by hash</td></tr>
+<tr><td class="id">MD-10</td><td>FeedSim upgrade: separate A and B lines, retransmit and snapshot services, packet loss, reordering, duplication, and the same feed through two publishers</td><td class="dep">MD-1</td><td class="wk">3</td><td>Every drill in <code>MD-3</code> and <code>MD-7</code> is expressible as a scenario with a stored baseline</td></tr>
+<tr><td class="id">MD-12</td><td>Vendor feed adapter for the long tail of venues, wrapped as a decoder so it plugs into the selector</td><td class="dep">MD-7</td><td class="wk">3</td><td>One vendor feed produces frames indistinguishable in shape from a direct feed; quality level reports correctly</td></tr>
+</table>
+</div>
+
+<h2 id="t-rt">Smart order router <span class="path hot">core/router</span></h2>
+<div class="track"><h3>RT</h3><span class="pill block">Blocks go-live</span><span class="tag">28 engineer-weeks &middot; 1 to 2 engineers, plus a quant for RT-10</span></div>
+<p>Design in document 3, router section. The router is where best execution is either provable or not, so the logged rejected alternative in <code>RouteDecision</code> is a requirement, not a nicety. It already has a place to plug in: the OMS asks for a plan with an <code>OrderState</code> carrying reason <code>RerouteRequired</code>, and the stub answers today.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">RT-1</td><td>Router skeleton replacing the stub: consume accepts and re-route requests, emit <code>RouteDecision</code> and <code>ChildOrder</code> in one atomic batch behind a watermark, honour the parent's remaining quantity</td><td class="dep">MD-8</td><td class="wk">3</td><td>Every simulator scenario passes on the real router with regenerated baselines; replay recomputes every plan</td></tr>
+<tr><td class="id">RT-2</td><td>Sweep: take displayed liquidity at or better than the limit across venues, cheapest net first, ISO when crossing protected quotes</td><td class="dep">RT-1, RT-6</td><td class="wk">3</td><td>Named market-shape scenarios pass; no trade-through in any run; child quantity never exceeds parent leaves</td></tr>
+<tr><td class="id">RT-3</td><td>DarkFirst: midpoint at ATSs with a time limit, then spill to lit</td><td class="dep">RT-2</td><td class="wk">2</td><td>Scenario with a dark venue that fills and one that does not; the timer path is deterministic under replay</td></tr>
+<tr><td class="id">RT-4</td><td>PassivePost: rest where rebate and fill rate are best, cross after a timer</td><td class="dep">RT-2</td><td class="wk">2</td><td>Queue-position fills in the simulator match the strategy's expectation; the timer is a sequenced message</td></tr>
+<tr><td class="id">RT-5</td><td>MidPeg, and the client-instruction flags (<code>noInternalize</code>, <code>allowDark</code>, <code>postOnly</code>) honoured across all strategies</td><td class="dep">RT-3, RT-4</td><td class="wk">2</td><td>A scenario per flag proves the instruction is obeyed and logged</td></tr>
+<tr><td class="id">RT-6</td><td>Cost model: expected net price per venue and liquidity type from fees, scorecard fill probability and reversion; the runner-up recorded in <code>RouteDecision</code></td><td class="dep">RT-1</td><td class="wk">3</td><td>Every parent order in a simulated day has a decision with a rejected alternative; the arithmetic is unit-tested against worked examples</td></tr>
+<tr><td class="id">RT-7</td><td>Session placement over <code>VenueSessionStatus</code>: least loaded with throttle headroom, symbol affinity, saturation as a cost not a wall</td><td class="dep">RT-1, VG-1</td><td class="wk">2</td><td>Session-drop drill re-plans onto survivors; a throttled session is avoided rather than queued behind</td></tr>
+<tr><td class="id">RT-8</td><td>Latency-aware release: per-venue offsets from measured one-way latency so children land together</td><td class="dep">RT-2</td><td class="wk">2</td><td>Arrival spread across venues measured in the simulator is inside a stated bound</td></tr>
+<tr><td class="id">RT-9</td><td>Re-planning: on child reject, cancel or partial fill with quantity left, re-enter the strategy with the remainder and current books</td><td class="dep">RT-2</td><td class="wk">2</td><td>Re-route budget and give-up path exercised; no parent is left with leaves and no plan</td></tr>
+<tr><td class="id">RT-10</td><td>TCA pipeline in Python: per-order and per-child mark-outs from the log, producing <code>VenueScorecard</code> published through the control plane</td><td class="dep">RT-6, PK-1</td><td class="wk">4</td><td>Scorecards regenerate from a recorded day deterministically; the router consumes them and the change is visible in decisions</td></tr>
+<tr><td class="id">RT-11</td><td>Regulation NMS behaviour: protected-quote handling, locked and crossed markets, ISO only where permitted, with the checks as assertions in the harness</td><td class="dep">RT-2, RT-5</td><td class="wk">3</td><td>Property test over random book states finds no trade-through and no improper ISO; reviewed against the rule text with compliance</td></tr>
+</table>
+</div>
+
+<h2 id="t-vg">Venue gateways <span class="path hot">core/venue</span></h2>
+<div class="track"><h3>VG</h3><span class="pill block">Blocks go-live</span><span class="tag">24 engineer-weeks &middot; 2 engineers &middot; certification lead time is the real constraint</span></div>
+<p>Design in document 3, venue gateway section. A pool of session workers, one per exchange port, with placement decided by the router and drop copy as the independent check. The simulator already has multi-session venues with throttles, cancel-on-disconnect and drop copy, so <code>VG-1</code> has a test bed on day one.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">VG-1</td><td>Session worker framework: per-port socket, login, sequence tracking, token bucket throttle, journaled session state, <code>VenueSessionStatus</code> publication, structural accept-bitset check</td><td class="dep">&mdash;</td><td class="wk">4</td><td>Property test: never sends an order whose parent has no sequenced accept. Throttle drill queues and publishes rather than dropping</td></tr>
+<tr><td class="id">VG-2</td><td>OUCH 5.0 over SoupBinTCP: codec both directions, with the byte examples from the specification as tests</td><td class="dep">&mdash;</td><td class="wk">3</td><td>Round-trip against every example in the spec; fuzz target on the inbound decoder</td></tr>
+<tr><td class="id">VG-3</td><td>OUCH session worker and its simulator twin speaking the real protocol over a real socket</td><td class="dep">VG-1, VG-2</td><td class="wk">3</td><td>Disconnect mid-order, sequence gap, duplicate ack, cancel-on-disconnect and port death with live orders all drill clean; child sequence to wire under 1.5&nbsp;&micro;s</td></tr>
+<tr><td class="id">VG-4</td><td>Drop-copy consumer feeding the OMS as an independent execution source, with break detection and alerting</td><td class="dep">VG-3</td><td class="wk">2</td><td>An injected missing execution is detected and paged within one second in the simulator</td></tr>
+<tr><td class="id">VG-5</td><td>NYSE Pillar binary gateway</td><td class="dep">VG-3</td><td class="wk">3</td><td>Same drill set as OUCH; certified in the venue test environment</td></tr>
+<tr><td class="id">VG-6</td><td>Cboe BOE gateway</td><td class="dep">VG-3</td><td class="wk">3</td><td>Same drill set; certified</td></tr>
+<tr><td class="id">VG-7</td><td>FIX 4.2 venue gateway for ATSs and wholesalers</td><td class="dep">VG-3, CG-3</td><td class="wk">3</td><td>Same drill set against two ATS test environments</td></tr>
+<tr><td class="id">VG-8</td><td>Certification runs: each venue's conformance script recorded as a replayable scenario</td><td class="dep">VG-3, VG-5, VG-6, VG-7</td><td class="wk">3</td><td>Every venue's script passes in its test environment and the recording is in CI so a regression is caught without re-certifying</td></tr>
+</table>
+</div>
+
+<h2 id="t-cg">Client gateways <span class="path hot">core/gateway</span></h2>
+<div class="track"><h3>CG</h3><span class="pill block">Blocks go-live</span><span class="tag">14 engineer-weeks &middot; 1 engineer</span></div>
+<p>Design in document 3, client gateway section. The binary protocol is the latency product and is built; the FIX engine is the licence decision in document 3's open questions. Both normalise to the same internal messages, so everything downstream is identical.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">CG-1</td><td>Binary protocol: session envelope, authentication, ticker to symbol index, NIC timestamp into <code>originTs</code>, normalise and sequence</td><td class="dep">&mdash;</td><td class="wk">3</td><td>Ingress to sequenced under 2&nbsp;&micro;s at p50 in the benchmark; inbound decoder fuzzed</td></tr>
+<tr><td class="id">CG-2</td><td>Session journal and resend: a reconnect resumes with everything unacknowledged, and a gateway restart does not lose a session</td><td class="dep">CG-1</td><td class="wk">2</td><td>Reconnect drill with orders in flight loses nothing and duplicates nothing</td></tr>
+<tr><td class="id">CG-3</td><td>FIX 4.4 gateway on the licensed engine: session handling, normalisation, and the conformance suite</td><td class="dep">CG-1</td><td class="wk">4</td><td>Conformance suite passes; resend and gap-fill drills clean; latency measured and published</td></tr>
+<tr><td class="id">CG-4</td><td>Drop copy out to clients and to compliance, generated from the log rather than gateway memory</td><td class="dep">CG-1, CG-3</td><td class="wk">2</td><td>Drop copy regenerated from a recorded day equals what was sent, byte for byte</td></tr>
+<tr><td class="id">CG-5</td><td>Protective throttles per session: message rate, open orders, cancel-to-fill ratio warnings</td><td class="dep">CG-1</td><td class="wk">1</td><td>A misbehaving client is throttled without affecting others, and the event is on the log</td></tr>
+<tr><td class="id">CG-6</td><td>Client certification harness: a script a prospective client runs against our test environment to prove their integration</td><td class="dep">CG-3, CG-4</td><td class="wk">2</td><td>An external tester completes onboarding using only the document and the harness</td></tr>
+</table>
+</div>
+
+<h2 id="t-pk">Position keeper <span class="path hot">core/poskeeper</span> <span class="path cold">services/ledger</span></h2>
+<div class="track"><h3>PK</h3><span class="pill block">Blocks go-live</span><span class="tag">16 engineer-weeks &middot; 1 hot-path and 1 Go engineer</span></div>
+<p>Design in document 3, position keeper section. The risk engine already consumes <code>PositionSnapshot</code> and <code>ExposureSnapshot</code> at session start, so the hot view has a consumer waiting. Reconciliation is the first cold service to build because self-clearing and every examination depend on it.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">PK-1</td><td>Hot view: positions by account and symbol folded from client-level fills, gross and net per account, published as snapshots at each checkpoint, exposed through shared memory</td><td class="dep">&mdash;</td><td class="wk">3</td><td>Replay-determinism test; the risk engine restarted mid-day from a checkpoint reaches the same exposure as one running since the open</td></tr>
+<tr><td class="id">PK-2</td><td>Corporate actions applied at <code>effectiveSeq</code> so every consumer adjusts at the same sequence number</td><td class="dep">PK-1</td><td class="wk">2</td><td>Split, reverse split, symbol change and cash dividend each have a test; the day-1 to day-2 fixture pair is the regression</td></tr>
+<tr><td class="id">PK-3</td><td>Cold ledger in Go: event-sourced from the log, FIFO and specific-identification lots, realised and unrealised P&amp;L, fees, position at any sequence number as a query</td><td class="dep">PK-1</td><td class="wk">6</td><td>Hot view and ledger agree on every position over a recorded day; lot accounting property-tested</td></tr>
+<tr><td class="id">PK-4</td><td>Reconciliation: load the clearing firm's position and cash files daily, diff against the ledger, every break a ticket with an owner and an age</td><td class="dep">PK-3, CO-2</td><td class="wk">4</td><td>An injected wrong file produces exactly the expected breaks; the ageing report is the operations dashboard</td></tr>
+<tr><td class="id">PK-5</td><td>Position and exposure re-base into the risk engine on a cadence, closing the loop between derived and incremental state</td><td class="dep">PK-1</td><td class="wk">1</td><td>Incremental and recomputed exposure never differ by more than the fills in flight, asserted in the harness</td></tr>
+</table>
+</div>
+
+<h2 id="t-pl">Platform, transport and failover <span class="path hot">core/seq</span> <span class="path cold">ops/</span></h2>
+<div class="track"><h3>PL</h3><span class="pill block">Blocks go-live</span><span class="tag">30 engineer-weeks &middot; 2 engineers, one of them infrastructure</span></div>
+<p>Design in document 3, platform section. Today everything runs in one process. This track is what turns it into a deployable system with a failover story someone has rehearsed. It is largely independent of the component tracks, which is why it can run alongside them from week one.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">PL-1</td><td>Aeron IPC behind the existing <code>Sequencer</code> and <code>StreamReader</code> interfaces; ordering, batching, watermarks and checkpoints unchanged</td><td class="dep">&mdash;</td><td class="wk">4</td><td>Every simulator scenario passes with components in separate processes, same hashes as in-process</td></tr>
+<tr><td class="id">PL-2</td><td>Multi-process harness: the same scenarios and drills with each engine as its own process, in CI</td><td class="dep">PL-1</td><td class="wk">3</td><td>A scenario can be run either way from one command and the results are identical</td></tr>
+<tr><td class="id">PL-3</td><td>Standby sequencer and promotion: independent journal, documented procedure, rehearsed drill</td><td class="dep">PL-1</td><td class="wk">4</td><td>Promotion under 2&nbsp;s with zero accepted orders lost, in a drill that runs monthly and in CI</td></tr>
+<tr><td class="id">PL-4</td><td>Telemetry: <code>LatencySample</code> and <code>QueueDepth</code> per stage to a separate stream, Prometheus exporter, Grafana dashboards, alert per stage with a runbook</td><td class="dep">PL-1</td><td class="wk">3</td><td>The p99.9 a client is shown and the p99.9 the build gate enforces are the same number from the same stage names</td></tr>
+<tr><td class="id">PL-5</td><td>Trace tool: follow the cause chain for an order and export it as an OpenTelemetry waterfall</td><td class="dep">&mdash;</td><td class="wk">2</td><td>An engineer can answer "where did those microseconds go" for any order in a recorded day without adding instrumentation</td></tr>
+<tr><td class="id">PL-6</td><td>Pinned benchmark runner in CI, with p99.9 gates enabled and baselines recorded on it</td><td class="dep">&mdash;</td><td class="wk">2</td><td><code>make benchgate</code> is green on the pinned host and fails on an injected regression</td></tr>
+<tr><td class="id">PL-7</td><td>Hot-path hygiene on real hardware: isolated cores, huge pages, NUMA-local memory, kernel bypass, interrupt steering, and the tuning checklist as code</td><td class="dep">PL-1</td><td class="wk">4</td><td>Latency budget from document 1 met on the target host; the tuning is reproducible from a clean machine</td></tr>
+<tr><td class="id">PL-8</td><td>Security: mutual TLS for client sessions, HSM-backed keys, signed configuration, four-eyes on limits and deployments, immutable operator audit on the log</td><td class="dep">CP-3</td><td class="wk">5</td><td>An external penetration test finds no critical issue; every operator action in a drill is reconstructible from the log</td></tr>
+<tr><td class="id">PL-9</td><td>Disaster recovery: standby site, log replication, quarterly rehearsed recovery from the archive</td><td class="dep">PL-3</td><td class="wk">3</td><td>A full day is reconstructed at the standby site within the stated recovery objective, with the drill documented for the regulator</td></tr>
+</table>
+</div>
+
+<h2 id="t-cp">Control plane and security master <span class="path cold">services/</span></h2>
+<div class="track"><h3>CP</h3><span class="pill block">Blocks go-live</span><span class="tag">22 engineer-weeks &middot; 2 Go engineers</span></div>
+<p>Design in document 2, security master sections, and document 3, control plane. Today the snapshot is built from a hand-written JSON fixture; production needs the bitemporal master and the nightly pipeline behind it, and the control plane is what makes a limit change or a kill switch an auditable event rather than a deployment.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">CP-1</td><td>Security master database: bitemporal tables, symbol index allocation that never recycles, conflict review queue</td><td class="dep">&mdash;</td><td class="wk">4</td><td>"What did we believe about this symbol at this time" is a query; index continuity is asserted daily</td></tr>
+<tr><td class="id">CP-2</td><td>Nightly pipeline: ingest exchange files, SIP close, vendor descriptive data, identifiers, corporate actions from two sources, threshold lists; resolve by precedence; validate; publish the snapshot and its manifest</td><td class="dep">CP-1</td><td class="wk">5</td><td>A validation failure blocks publication and pages; a green manifest is required before any engine starts; the existing fixture pair still round-trips</td></tr>
+<tr><td class="id">CP-3</td><td>Control plane service: versioned signed configuration, component registry, four-eyes approval, sequencing of limits, kill switches, strategy parameters and routing profiles</td><td class="dep">&mdash;</td><td class="wk">5</td><td>No limit or kill can be issued without two approvals, and both are on the log with the operator identity</td></tr>
+<tr><td class="id">CP-4</td><td>Kill switch end to end: operator action to every engine flat, including the physical button and the venue-side cancel-on-disconnect</td><td class="dep">CP-3, VG-3</td><td class="wk">2</td><td>Sequenced kill to last cancel on the wire under 100&nbsp;&micro;s in the drill; tested monthly in production in a test symbol</td></tr>
+<tr><td class="id">CP-5</td><td>Deployment: start the new instance replaying in shadow, compare its state hash to the live one, cut over at a sequence number</td><td class="dep">PL-1, CP-3</td><td class="wk">4</td><td>A component is replaced mid-day in a drill with no gap in its output and no divergence in its hash</td></tr>
+<tr><td class="id">CP-6</td><td>Operator console: the day's state, component health, break queue, and the controls the runbooks reference</td><td class="dep">CP-3, PL-4</td><td class="wk">2</td><td>An operator completes every runbook without a shell</td></tr>
+</table>
+</div>
+
+<h2 id="t-mg">Margin engine <span class="path cold">services/margin</span></h2>
+<div class="track"><h3>MG</h3><span class="pill block">Blocks go-live</span><span class="tag">8 engineer-weeks &middot; 1 Go engineer</span></div>
+<p>Design in document 3, margin section. The risk engine already treats <code>BuyingPowerUpdate</code> as a full re-base of its incremental figure, so this plugs into an existing contract.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">MG-1</td><td>Rules engine: Reg T initial and maintenance, house rules, concentration and hard-to-borrow add-ons by margin class</td><td class="dep">PK-1</td><td class="wk">4</td><td>Worked examples from the rule reproduce exactly; a review with compliance signs off the house rules</td></tr>
+<tr><td class="id">MG-2</td><td>Continuous recompute on a timer and on large moves, publishing buying power to the risk engine</td><td class="dep">MG-1</td><td class="wk">2</td><td>Incremental and recomputed buying power never diverge beyond the fills in flight, asserted over a recorded day</td></tr>
+<tr><td class="id">MG-3</td><td>Margin calls as workflow objects with deadlines and escalation; forced liquidation through the normal risk and router path</td><td class="dep">MG-2, RT-2</td><td class="wk">2</td><td>A call and a liquidation run end to end in the simulator and are fully auditable from the log</td></tr>
+</table>
+</div>
+
+<h2 id="t-co">Post-trade, clearing and compliance <span class="path cold">services/</span></h2>
+<div class="track"><h3>CO</h3><span class="pill block">Blocks go-live</span><span class="tag">34 engineer-weeks &middot; 2 to 3 Go and Python engineers</span></div>
+<p>Design in document 3, post-trade and compliance sections. This is the track people underestimate: none of it is algorithmically hard and all of it is required before a single client order can be accepted.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">CO-1</td><td>Cash ledger: double entry per account and currency, every movement tied to a log event or an approved manual entry</td><td class="dep">PK-3</td><td class="wk">5</td><td>Every account balances every day; an unbalanced entry is impossible by construction</td></tr>
+<tr><td class="id">CO-2</td><td>Clearing firm adapter: trade, position and cash files out, breaks in, behind an interface that self-clearing later replaces</td><td class="dep">CO-1</td><td class="wk">5</td><td>A full simulated day produces files the clearing firm accepts in their test environment</td></tr>
+<tr><td class="id">CO-3</td><td>Allocation for institutional clients: block to sub-accounts, same-day affirmation for T+1, refusal to close the day with an unaffirmed trade</td><td class="dep">CO-2</td><td class="wk">4</td><td>Allocation round-trip with a test counterparty; the end-of-day job blocks and pages on an unaffirmed trade</td></tr>
+<tr><td class="id">CO-4</td><td>CAT extraction: every order event with the required linkages derived from the cause chain, submitted through a reporting agent</td><td class="dep">RT-1, CG-3</td><td class="wk">6</td><td>The agent accepts a full simulated day; our events reconcile against the venues' own reported events</td></tr>
+<tr><td class="id">CO-5</td><td>Best execution: per-order TCA against the NBBO at arrival and each child release, quarterly Rule 605 and 606 reports, committee pack</td><td class="dep">RT-10</td><td class="wk">5</td><td>Reports generate from the log with no manual step and are reviewed by counsel before the first filing</td></tr>
+<tr><td class="id">CO-6</td><td>Reg SHO evidence: locate chain per short sale, close-out clock, Rule 201 records, threshold handling</td><td class="dep">SL-2</td><td class="wk">4</td><td>Every short sale in a simulated day resolves to a locate with a named source; an injected failure is caught by the daily job</td></tr>
+<tr><td class="id">CO-7</td><td>Surveillance: vendor package integrated, fed from the log, plus the in-house check for the market maker trading ahead of client flow</td><td class="dep">CO-4</td><td class="wk">3</td><td>Vendor ingests a full day; the in-house check detects an injected case and produces a reviewable alert</td></tr>
+<tr><td class="id">CO-8</td><td>Records retention: write-once storage for journals and captures, with a tested retrieval procedure</td><td class="dep">PL-9</td><td class="wk">2</td><td>A regulator-style request for a specific day and order is answered inside the stated time in a drill</td></tr>
+</table>
+</div>
+
+<h2 id="t-sl">Stock loan <span class="path cold">services/stockloan</span></h2>
+<div class="track"><h3>SL</h3><span class="pill block">SL-1 to SL-3 block short selling</span><span class="tag">24 engineer-weeks &middot; 2 Go engineers</span></div>
+<p>Design in document 3, stock loan section. The locate messages exist and the risk engine already consumes them; the service that writes them does not. If the launch permits short selling, <code>SL-1</code> to <code>SL-3</code> are go-live blocking. If it does not, the whole track moves after launch and the risk engine simply rejects short sales.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">SL-1</td><td>Availability ledger: sources and reservations per symbol, availability always derived, never cached</td><td class="dep">&mdash;</td><td class="wk">5</td><td>Availability recomputed from the event log matches the live figure exactly over a simulated day</td></tr>
+<tr><td class="id">SL-2</td><td>Locate engine: answer a request in under a millisecond naming a source, morning ETB list regenerated from verified availability, intraday removal on a failed borrow</td><td class="dep">SL-1</td><td class="wk">5</td><td>Locate accounting matches the risk engine to the unit: granted, consumed, returned on cancel, expired. No assume-available path exists in the code</td></tr>
+<tr><td class="id">SL-3</td><td>Borrow booking on short-sale execution, with the buy-in workflow when a borrow fails</td><td class="dep">SL-2, PK-1</td><td class="wk">4</td><td>A failed borrow removes the symbol from ETB, alerts the desk and starts the clock, in a drill</td></tr>
+<tr><td class="id">SL-4</td><td>Recalls and buy-ins, collateral marking, rate publication</td><td class="dep">SL-3</td><td class="wk">4</td><td>Recall to replacement or buy-in runs end to end against the deadline</td></tr>
+<tr><td class="id">SL-5</td><td>Lender platform integrations and the lending desk's offer side</td><td class="dep">SL-4</td><td class="wk">6</td><td>Two external lenders integrated; the desk books a loan and earns a fee in a test environment</td></tr>
+</table>
+</div>
+
+<h2 id="t-core">Core follow-ups <span class="path hot">core/</span></h2>
+<div class="track"><h3>CR</h3><span class="pill block">Mixed</span><span class="tag">11 engineer-weeks &middot; can be picked up by anyone between larger items</span></div>
+<p>Known work in components that already exist, carried from document 3's debt list and from building the OMS. Small, well-defined, and good first items for someone new to the codebase.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">CR-1</td><td>Money aggregates move to 1e-4 units so firm-wide exposure is not capped at $92 billion; new fields appended, old ones deprecated</td><td class="dep">&mdash;</td><td class="wk">2</td><td>Schema v4 passes the checker; risk and margin use the wide fields; a synthetic firm-scale day does not hit the ceiling</td></tr>
+<tr><td class="id">CR-2</td><td>Day expiry through sequenced timers and GTC carry into the next session via the snapshot's open-order section</td><td class="dep">CP-2</td><td class="wk">2</td><td>A Day order expires at the venue's close from the calendar; a GTC order survives a session boundary with its identity intact</td></tr>
+<tr><td class="id">CR-3</td><td>SSR re-pricing: a short sale at or below the bid is re-priced to bid plus one tick and marked, instead of rejected</td><td class="dep">RT-1</td><td class="wk">1</td><td>The client sees the re-price on the acknowledgement; risk accepts the marked order; both are in the reason coverage</td></tr>
+<tr><td class="id">CR-4</td><td>Venue-side replace where the protocol supports it, instead of cancel and re-route</td><td class="dep">VG-3</td><td class="wk">2</td><td>Queue position is retained where the venue allows it, proved in the simulator</td></tr>
+<tr><td class="id">CR-5</td><td>Internaliser hooks in the router and OMS so the market maker can be added without touching the order path again</td><td class="dep">RT-5</td><td class="wk">2</td><td>An <code>InternalizeDecision</code> path exists and is exercised by a stub that always declines</td></tr>
+<tr><td class="id">CR-6</td><td>TypeScript codec emitter and the JSON projection for the client front end and tooling</td><td class="dep">&mdash;</td><td class="wk">2</td><td>Generated types decode a recorded log in a browser test</td></tr>
+</table>
+</div>
+
+<h2 id="t-mm">Market making and internalisation <span class="path hot">core/mm</span></h2>
+<div class="track"><h3>MM</h3><span class="pill later">After go-live</span><span class="tag">28 engineer-weeks &middot; 2 engineers and a quantitative researcher</span></div>
+<p>Design in document 3, market maker section. Deliberately after launch: it is the second revenue line, it needs the agency stack underneath it, and it carries the conflict-of-interest surface that regulators examine most closely. <code>CR-5</code> keeps its hooks in place so adding it later does not reopen the order path.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">MM-1</td><td>Quoting engine: fair value from microprice and signals, inventory-aware placement, hard limits, parameters as sequenced messages</td><td class="dep">MD-8, PK-1</td><td class="wk">8</td><td>Quoting replay against recorded days matches stored intents; an inventory breach flattens through the router</td></tr>
+<tr><td class="id">MM-2</td><td>Research pipeline in Python: offline fitting, parameter publication through the control plane, no learning code in the live engine</td><td class="dep">MM-1</td><td class="wk">6</td><td>A parameter change is an event on the log and replay reproduces behaviour either side of it</td></tr>
+<tr><td class="id">MM-3</td><td>Internaliser: match client flow against the quote with logged price improvement and the conservative improvement rules</td><td class="dep">MM-1, CR-5</td><td class="wk">5</td><td>Every internalised fill shows improvement against the NBBO; the daily compliance job verifies it</td></tr>
+<tr><td class="id">MM-4</td><td>Adverse selection: toxicity scorecards, news windows, venue-status reactions</td><td class="dep">MM-1</td><td class="wk">4</td><td>Scenario-driven: quotes pull or widen where expected and the decision is on the log</td></tr>
+<tr><td class="id">MM-5</td><td>Bona fide market-making validation from the log, with the locate exemption withdrawn automatically when criteria fail</td><td class="dep">MM-3, SL-2</td><td class="wk">3</td><td>The daily job reproduces the exemption decision for every symbol and revokes it in an injected failure</td></tr>
+<tr><td class="id">MM-6</td><td>Hedging and flattening strategies for the desk</td><td class="dep">MM-1</td><td class="wk">2</td><td>A flatten completes inside the stated bound in the simulator</td></tr>
+</table>
+</div>
+
+<h2 id="tracks">Tracks and staffing</h2>
+<p>Ten tracks, of which seven can start immediately because they depend on nothing that does not already exist. That is the point of the contracts in <a href="#rules">the rules section</a>: an engineer can build against the sequenced log and the simulator without waiting for the component that will eventually feed them.</p>
+<div class="tablewrap">
+<table>
+<tr><th>Track</th><th>Can start</th><th>People</th><th>Skills</th><th>Blocking weeks</th></tr>
+<tr><td>MD market data</td><td>Now</td><td class="num">2</td><td>C++, multicast and exchange protocols, lock-free structures</td><td class="num">33</td></tr>
+<tr><td>RT router</td><td>After MD-8</td><td class="num">1&ndash;2</td><td>C++, microstructure; a quant for TCA</td><td class="num">28</td></tr>
+<tr><td>VG venue gateways</td><td>Now</td><td class="num">2</td><td>C++, binary session protocols, patience for certification</td><td class="num">24</td></tr>
+<tr><td>CG client gateways</td><td>Now</td><td class="num">1</td><td>C++, FIX, session semantics</td><td class="num">14</td></tr>
+<tr><td>PK position keeper</td><td>Now</td><td class="num">2</td><td>One C++ for the hot view, one Go for the ledger</td><td class="num">16</td></tr>
+<tr><td>PL platform</td><td>Now</td><td class="num">2</td><td>C++ and Aeron, Linux performance, SRE</td><td class="num">30</td></tr>
+<tr><td>CP control plane and security master</td><td>Now</td><td class="num">2</td><td>Go, Postgres, data pipelines</td><td class="num">22</td></tr>
+<tr><td>MG margin</td><td>After PK-1</td><td class="num">1</td><td>Go, and someone who has read Reg T</td><td class="num">8</td></tr>
+<tr><td>CO post-trade and compliance</td><td>Now (CO-1)</td><td class="num">2&ndash;3</td><td>Go and Python, accounting discipline, regulatory reading</td><td class="num">34</td></tr>
+<tr><td>SL stock loan</td><td>Now</td><td class="num">2</td><td>Go, securities lending domain</td><td class="num">14</td></tr>
+<tr><td>CR core follow-ups</td><td>Now</td><td class="num">&mdash;</td><td>Anyone, between larger items</td><td class="num">5</td></tr>
+<tr class="total"><td>Go-live blocking</td><td></td><td class="num">~14</td><td></td><td class="num">228</td></tr>
+<tr><td>MM market making</td><td>After go-live</td><td class="num">3</td><td>C++ and a quantitative researcher</td><td class="num">28</td></tr>
+<tr><td>SL-4, SL-5 lending desk</td><td>After go-live</td><td class="num">2</td><td>Go, lender integrations</td><td class="num">10</td></tr>
+<tr><td>MD-12, CR-4 to CR-6</td><td>Either side</td><td class="num">&mdash;</td><td></td><td class="num">9</td></tr>
+</table>
+</div>
+<p>Fourteen engineers is the shape that finishes the blocking work in about a year. With eight, the same work takes closer to eighteen months and the non-software track stops being the binding constraint, which is a worse position to be in, not a better one. If the team is smaller than eight, cut scope rather than stretching the schedule: launch on one venue instead of four, agency only with short selling disabled, and a binary API with no FIX. That is a real product and it removes about 60 weeks.</p>
+
+<h2 id="path">Critical path</h2>
+<p>The chain that decides the date runs through market data. Nothing in the router can be built against a synthetic book once the real one exists, and best-execution reporting cannot be finished until the router is. Everything else parallelises around it.</p>
+<div class="diagram" role="img" aria-label="Schedule diagram: market data runs from month zero to eight and feeds the router; venue and client gateways, platform, control plane, position keeper, post-trade and stock loan run in parallel; certification and the parallel run occupy the final months before go-live.">
+<svg viewBox="0 0 1100 470" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+<style>
+.bar{fill:var(--cold-soft);stroke:var(--cold);stroke-width:1.2}
+.bar.crit{fill:var(--hot-soft);stroke:var(--hot);stroke-width:1.6}
+.bar.late{fill:var(--panel);stroke:var(--rule);stroke-width:1.2;stroke-dasharray:4 3}
+.t{fill:var(--ink);font-size:12px;font-weight:600}
+.s{fill:var(--muted);font-size:10.5px}
+.ax{stroke:var(--rule);stroke-width:1}
+.ln{stroke:var(--hot);stroke-width:1.4;fill:none;marker-end:url(#ah4)}
+.lbl{fill:var(--hot);font-size:11px;font-weight:600}
+</style>
+</defs>
+<text x="8" y="16" class="lbl">Critical path</text>
+<text x="120" y="16" class="s">months from the day engineers start; the regulatory track below runs from the same day and usually finishes later</text>
+<g>
+<line x1="150" y1="30" x2="1080" y2="30" class="ax"/>
+<text x="150" y="24" class="s">0</text><text x="266" y="24" class="s">2</text><text x="382" y="24" class="s">4</text><text x="498" y="24" class="s">6</text><text x="614" y="24" class="s">8</text><text x="730" y="24" class="s">10</text><text x="846" y="24" class="s">12</text><text x="962" y="24" class="s">14</text><text x="1062" y="24" class="s">16</text>
+<line x1="150" y1="30" x2="150" y2="440" class="ax"/><line x1="382" y1="30" x2="382" y2="440" class="ax"/><line x1="614" y1="30" x2="614" y2="440" class="ax"/><line x1="846" y1="30" x2="846" y2="440" class="ax"/>
+</g>
+<text x="8" y="52" class="t">MD market data</text><rect x="150" y="40" width="290" height="20" rx="3" class="bar crit"/><text x="158" y="54" class="s">MD-1, 11, 2, 3 &rarr; decoders &rarr; selector &rarr; book builder</text>
+<text x="8" y="80" class="t">RT router</text><rect x="440" y="68" width="230" height="20" rx="3" class="bar crit"/><text x="448" y="82" class="s">skeleton, strategies, cost model, Reg NMS</text>
+<text x="8" y="108" class="t">CO best execution</text><rect x="670" y="96" width="150" height="20" rx="3" class="bar crit"/><text x="678" y="110" class="s">TCA, 605 / 606, CAT</text>
+<path d="M440 50 L438 68" class="ln"/><path d="M670 78 L668 96" class="ln"/>
+<text x="8" y="140" class="t">VG venue gateways</text><rect x="150" y="128" width="350" height="20" rx="3" class="bar"/><text x="158" y="142" class="s">workers, OUCH, Pillar, BOE, FIX</text>
+<rect x="500" y="128" width="200" height="20" rx="3" class="bar"/><text x="508" y="142" class="s">certification in venue test environments</text>
+<text x="8" y="168" class="t">CG client gateways</text><rect x="150" y="156" width="230" height="20" rx="3" class="bar"/><text x="158" y="170" class="s">binary, session journal, FIX, drop copy</text>
+<text x="8" y="196" class="t">PL platform</text><rect x="150" y="184" width="430" height="20" rx="3" class="bar"/><text x="158" y="198" class="s">Aeron, multi-process, standby, telemetry, hygiene, security</text>
+<text x="8" y="224" class="t">CP control plane</text><rect x="150" y="212" width="320" height="20" rx="3" class="bar"/><text x="158" y="226" class="s">security master, nightly pipeline, four-eyes, deployment</text>
+<text x="8" y="252" class="t">PK positions</text><rect x="150" y="240" width="270" height="20" rx="3" class="bar"/><text x="158" y="254" class="s">hot view, ledger, reconciliation</text>
+<text x="8" y="280" class="t">MG margin</text><rect x="300" y="268" width="130" height="20" rx="3" class="bar"/><text x="308" y="282" class="s">Reg T, calls</text>
+<text x="8" y="308" class="t">CO post-trade</text><rect x="150" y="296" width="380" height="20" rx="3" class="bar"/><text x="158" y="310" class="s">cash ledger, clearing adapter, allocation, surveillance</text>
+<text x="8" y="336" class="t">SL locates</text><rect x="150" y="324" width="230" height="20" rx="3" class="bar"/><text x="158" y="338" class="s">availability, locate engine, borrow booking</text>
+<text x="8" y="364" class="t">Parallel run</text><rect x="700" y="352" width="180" height="20" rx="3" class="bar crit"/><text x="708" y="366" class="s">20 clean reconciliation days</text>
+<text x="8" y="392" class="t">Go live</text><rect x="880" y="380" width="14" height="20" rx="3" class="bar crit"/><text x="902" y="394" class="s">first external client order, subject to the track below</text>
+<text x="8" y="420" class="t">MM market making</text><rect x="900" y="408" width="180" height="20" rx="3" class="bar late"/><text x="908" y="422" class="s">after go-live</text>
+<text x="8" y="448" class="t">SL lending desk</text><rect x="900" y="436" width="140" height="20" rx="3" class="bar late"/><text x="908" y="450" class="s">after go-live</text>
+</svg>
+</div>
+<p>Three things worth reading off the diagram. Market data to router to best-execution reporting is eleven months of chain and cannot be compressed by adding people to the middle of it. Venue certification starts before the gateways are finished, because the queue is the constraint rather than the code. And the parallel run at the end is twenty business days of clean reconciliation against real market data with no client money at risk; it is not optional and it is not shortenable.</p>
+
+<h2 id="nonsw">The non-software track</h2>
+<p>This runs from day one, in parallel with everything above, and it is usually what sets the date. None of it is engineering work, and none of it can be started late. The engineering team's dependency on it is real: venue ports cannot be ordered before the broker-dealer registration is in flight, and market-data licences are priced per client, which changes the business model if discovered late.</p>
+<div class="tablewrap">
+<table>
+<tr><th>Item</th><th>Owner</th><th>Lead time</th><th>What it blocks</th></tr>
+<tr><td>Broker-dealer registration and SRO membership</td><td>Chief compliance officer, counsel</td><td>6 to 12 months</td><td>Everything. Nothing external can trade before it</td></tr>
+<tr><td>Clearing firm selection, diligence and onboarding</td><td>Chief operating officer</td><td>3 to 6 months</td><td>CO-2 clearing adapter, the parallel run, settlement</td></tr>
+<tr><td>Net capital and the funding to hold it</td><td>Chief financial officer</td><td>Continuous</td><td>Registration and the size of the book</td></tr>
+<tr><td>Co-location, cross-connects, circuits</td><td>Infrastructure lead</td><td>2 to 4 months</td><td>PL-7 hygiene and every real latency number</td></tr>
+<tr><td>Exchange membership, ports and certification slots</td><td>Infrastructure and venue relations</td><td>2 to 6 months per venue</td><td>VG-8 certification, the venue set at launch</td></tr>
+<tr><td>Market-data licences, direct and SIP, with per-client terms</td><td>Chief operating officer, counsel</td><td>2 to 4 months</td><td>MD-4, MD-5 in production; the client pricing model</td></tr>
+<tr><td>Security master and corporate-action vendor contracts</td><td>Data lead</td><td>1 to 3 months</td><td>CP-2 nightly pipeline in production</td></tr>
+<tr><td>Surveillance vendor selection</td><td>Compliance</td><td>2 to 3 months</td><td>CO-7</td></tr>
+<tr><td>FIX engine licence decision</td><td>Engineering lead</td><td>1 month</td><td>CG-3; the alternative is three months of building</td></tr>
+<tr><td>CAT reporting agent</td><td>Compliance</td><td>1 to 2 months</td><td>CO-4 submission</td></tr>
+<tr><td>Written supervisory procedures, business continuity plan, operations runbooks</td><td>Compliance and operations</td><td>3 months</td><td>Registration and the first examination</td></tr>
+<tr><td>Insurance, audit, and the first-year regulatory filings calendar</td><td>Finance and compliance</td><td>2 to 3 months</td><td>Go-live approval</td></tr>
+</table>
+</div>
+
+<h2 id="gates">Go-live gates</h2>
+<p>The launch decision is this checklist, not a date. Each line names the evidence and who signs it. None of them is a judgement call, which is the point: an engineer or an operator can tell you today whether a line is green.</p>
+<div class="gate">
+<div class="box"></div><div><p><strong>All blocking work items closed.</strong> Every item marked as blocking above is green in CI on main.</p><p class="who">Engineering lead</p></div>
+<div class="box"></div><div><p><strong>Determinism holds.</strong> Zero checkpoint-hash divergences across primary, standby and cold replay over sixty consecutive recorded days, with gcc and clang builds agreeing.</p><p class="who">Engineering lead</p></div>
+<div class="box"></div><div><p><strong>Latency measured and published.</strong> Agency order p50 at or under 11&nbsp;&micro;s and p99.9 at or under 40&nbsp;&micro;s on the production host, from the same telemetry clients will be shown.</p><p class="who">Engineering lead</p></div>
+<div class="box"></div><div><p><strong>Market access is structural.</strong> Zero orders can reach a venue gateway without a sequenced risk accept, proved by the property test and the gateway's bitset check.</p><p class="who">Engineering lead, chief compliance officer</p></div>
+<div class="box"></div><div><p><strong>Kill switch rehearsed.</strong> Sequenced kill to last cancel on the wire under 100&nbsp;&micro;s, tested in production in a test symbol, with the physical button wired.</p><p class="who">Head of trading, operations</p></div>
+<div class="box"></div><div><p><strong>Failover rehearsed.</strong> Sequencer promotion under two seconds with zero accepted orders lost, drilled in the production environment within the last month.</p><p class="who">Infrastructure lead</p></div>
+<div class="box"></div><div><p><strong>Disaster recovery rehearsed.</strong> A full day reconstructed at the standby site inside the stated recovery objective, documented for the regulator.</p><p class="who">Infrastructure lead, compliance</p></div>
+<div class="box"></div><div><p><strong>Twenty clean reconciliation days.</strong> Twenty consecutive business days of parallel running with zero unexplained breaks against the clearing firm's files.</p><p class="who">Chief operating officer</p></div>
+<div class="box"></div><div><p><strong>Every venue certified.</strong> Each launch venue's conformance script passed in its test environment and recorded as a CI scenario.</p><p class="who">Engineering lead, venue relations</p></div>
+<div class="box"></div><div><p><strong>Regulatory reporting proved end to end.</strong> CAT accepted by the agent for a full simulated day and reconciled against venue-reported events; 605 and 606 generated and reviewed by counsel.</p><p class="who">Chief compliance officer</p></div>
+<div class="box"></div><div><p><strong>Locates are real.</strong> If short selling is enabled at launch, every short sale in the parallel run resolves to a granted locate with a named source, with no assume-available path in the code.</p><p class="who">Chief compliance officer</p></div>
+<div class="box"></div><div><p><strong>Registration effective, clearing live, capital held.</strong> The firm is approved, the clearing agreement is executed, and net capital is in place with headroom.</p><p class="who">Chief executive, chief financial officer, chief compliance officer</p></div>
+<div class="box"></div><div><p><strong>Operations can run the day.</strong> Every runbook executed end to end by someone who did not write it, including a start of day, an end of day, a break, a halt and an incident.</p><p class="who">Operations lead</p></div>
+<div class="box"></div><div><p><strong>Security reviewed.</strong> External penetration test with no critical finding outstanding, four-eyes enforced on limits and deployments, operator actions auditable from the log.</p><p class="who">Infrastructure lead, compliance</p></div>
+</div>
+<p>Launch shape once the gates are green: one client, one venue, small size, for a week, with the kill switch in a hand that is on the desk. Then widen by client, then by venue, then by size, with a week of evidence between each step.</p>
+
+<h2 id="risks">What will go wrong</h2>
+<p>Named so the team recognises them early rather than discovering them.</p>
+<ul>
+<li><strong>Venue certification queues.</strong> Measured in months, scheduled by the venue, and not compressible with money or effort. Book slots before the gateway is finished; a failed slot costs weeks of waiting, not days of fixing.</li>
+<li><strong>Market-data licensing arithmetic.</strong> Direct-feed costs scale with client count in ways that can invert the business model. Get the real per-client numbers in writing during the first quarter, not during the pricing discussion with the first client.</li>
+<li><strong>The clearing firm's risk appetite.</strong> A new broker with a market maker and a stock-loan book is a harder sell than a plain agency broker. Have a second candidate in diligence, because the first one saying no late is a six-month event.</li>
+<li><strong>Reconciliation breaks late in the parallel run.</strong> The twenty-day clock restarts on an unexplained break. Run reconciliation from the day the ledger exists, not from the day the parallel run starts, so the breaks are found in month six rather than month thirteen.</li>
+<li><strong>Determinism erosion.</strong> The first component someone writes with a map iteration, a wall clock, or an unordered container in a state hash breaks replay, and it will not fail loudly. The checkpoint-hash comparison across builds is what catches it; keep it in CI and treat a divergence as a stop-work.</li>
+<li><strong>The tail, not the median.</strong> Clients measure the worst fifty in a hundred thousand. Every allocation, every syscall and every lock that creeps onto the order path shows up there and nowhere else. The benchmark gates exist for this; do not let them go informational on the pinned host.</li>
+<li><strong>Scope creep into market making.</strong> It is the most interesting work in the building and it is deliberately after launch. Adding it early costs the launch date and doubles the compliance surface at exactly the moment the firm has no track record to defend it with.</li>
+<li><strong>Key-person concentration.</strong> Every track above has one owner. Write down what each of them knows that is not in the repository, and pair on the sequencer, the risk engine and the clearing adapter specifically.</li>
+</ul>
+
+<footer>Delivery plan prepared September 2026 against <code>7abd21a</code>. Sizes are planning estimates for an engineer who has read documents 2 and 3. Lead times for the non-software track are typical ranges, not commitments; confirm each with the counterparty. Regulatory references are to US rules and their current requirements should be confirmed with counsel before each phase gate.</footer>
+</main>
+</div>
+</body>
+</html>

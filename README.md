@@ -6,7 +6,8 @@ benchmark harness with regression gates, and a simulator harness that runs a syn
 client order through risk, OMS, a stub router and a simulated venue and back, and proves it replays
 bit for bit including every client report. Not a trading system yet: no router, venue gateways or
 market-data handlers; the harness uses explicit stand-ins for them. The design documents are in
-`docs/`; document 3 is the gap analysis and the plan.
+`docs/`: 1 is the system design, 2 the schema and security master, 3 the gap analysis and component
+designs, 4 the delivery plan to go-live (every remaining task as an assignable work item).
 
 Everything here is exercised by one command:
 
