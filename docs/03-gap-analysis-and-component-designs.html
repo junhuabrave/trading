@@ -446,7 +446,7 @@ footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:v
 </div>
 
 <h2 id="plan">Build order</h2>
-<p>Each increment is a working, testable system. The order follows dependencies: nothing is built before the harness that tests it. Dates assume the team in document 1 is being assembled in parallel and the first two increments are done by a small core; the regulatory track runs alongside and usually sets the pace for go-live.</p>
+<p>Each increment is a working, testable system. The order follows dependencies: nothing is built before the harness that tests it. The phase <em>dates</em> here are superseded by document 4's critical path, which starts the clock when a full team is in place and lands twelve to fourteen months later; the phase <em>order</em> still holds. Dates assume the team in document 1 is being assembled in parallel and the first two increments are done by a small core; the regulatory track runs alongside and usually sets the pace for go-live.</p>
 <div class="diagram" role="img" aria-label="Dependency diagram: v0.1 foundation feeds v0.2 simulator and OMS, then v0.3 market data, router and position keeper, then v0.4 gateways and platform, then v0.5 cold path, then v0.6 market maker and stock loan.">
 <svg viewBox="0 0 1100 330" xmlns="http://www.w3.org/2000/svg">
 <defs>
@@ -505,6 +505,7 @@ footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:v
 <li><h4>v0.6 Revenue engines <span class="tag">Second half of 2027</span></h4>
 <p>Market maker and internaliser in a small liquid universe, the stock-loan desk with the locate engine feeding risk, Pillar and BOE gateways, then UK and EU venues and reporting. This is where document 1's second and third revenue lines start.</p></li>
 </ol>
+<div class="note risk"><p><strong>Superseded by document 4.</strong> The table below sizes each component as one piece of work, bottom-up from the designs above. Document 4 decomposes the same scope into a hundred assignable items and arrives at about 323 engineer-weeks rather than 119, because it also carries the second and third venue, certification, the client test environment, accounts and onboarding, the drills and the reports. Where the two disagree, document 4 governs. This table is kept because the per-component shape is still the right way to read the designs above.</p></div>
 <div class="tablewrap">
 <table>
 <tr><th>Component</th><th>Estimate</th><th>Depends on</th></tr>

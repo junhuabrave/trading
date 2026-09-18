@@ -123,6 +123,7 @@ footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:v
 <li><a href="#t-mg">Margin</a></li>
 <li><a href="#t-co">Post-trade, compliance</a></li>
 <li><a href="#t-sl">Stock loan</a></li>
+<li><a href="#t-op">Operating the business</a></li>
 <li><a href="#t-core">Core follow-ups</a></li>
 <li><a href="#t-mm">Market making</a></li>
 <li class="grp">Delivery</li>
@@ -130,6 +131,7 @@ footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:v
 <li><a href="#path">Critical path</a></li>
 <li><a href="#nonsw">The non-software track</a></li>
 <li><a href="#gates">Go-live gates</a></li>
+<li><a href="#scope">Out of scope</a></li>
 <li><a href="#risks">What will go wrong</a></li>
 </ol>
 </nav>
@@ -143,17 +145,20 @@ footer{margin-top:4rem;padding-top:1rem;border-top:1px solid var(--rule);color:v
 
 <h2 id="use">How to use this</h2>
 <p>Documents 1 and 2 are the design. Document 3 is the gap analysis and the architecture of each missing component; it is what an engineer reads before starting an item. This document is the delivery plan: the same work cut into pieces one person can own, with the order they have to happen in and the evidence that closes them.</p>
+<div class="note risk"><p><strong>Where this disagrees with document 3, this document governs.</strong> Document 3 ends with an effort table totalling about 119 engineer-weeks and a phase plan that puts beta clients in the middle of 2027. This plan says 323, and twelve to fourteen months from the day a full team is in place. Both were written honestly and the difference is not a correction of arithmetic: document 3 sized each component as "build the thing", bottom-up from its own design; this one sizes 100 items that include the second and third venue, certification, the test environment, the drills, the reports and the work nobody enjoys. Decomposed estimates are reliably larger than component estimates, and reliably closer to right. Document 3's table has been marked as superseded so the two do not circulate as rival plans.</p></div>
 <p>Every item has an id (<code>MD-3</code>, <code>RT-2</code>), the items it depends on, a size in engineer-weeks for someone who has read document 3 and is comfortable in the codebase, and a <em>done when</em> that is a command or a check, not an opinion. An item is finished when its <em>done when</em> is green in CI on the main branch, not when the code is merged.</p>
 <p>Sizes assume one engineer per item, with review. They do not include the ramp-up: budget a week for the first item anyone takes, spent reading document 2 and 3, running <code>make test</code>, and walking one order through the simulator with <code>tools/loginspect.py chain</code>.</p>
-<div class="note"><p><strong>The estimate to take seriously.</strong> The engineering below is about 256 engineer-weeks that block go-live, plus 55 more that follow it. Sixteen engineers do not finish that in sixteen weeks: the dependency chain through market data and the router is much longer than the average, so plan on twelve to fourteen months. The regulatory, clearing and venue-certification track in <a href="#nonsw">the non-software section</a> runs twelve to eighteen months from a standing start and is almost always what sets the date. Start that track first, whatever the engineering plan says.</p></div>
+<div class="note"><p><strong>The estimate to take seriously.</strong> The engineering below is about 268 engineer-weeks that block go-live, plus 55 more that follow it. Seventeen engineers do not finish that in sixteen weeks: the dependency chain through market data and the router is much longer than the average, so plan on twelve to fourteen months. The regulatory, clearing and venue-certification track in <a href="#nonsw">the non-software section</a> runs twelve to eighteen months from a standing start and is almost always what sets the date. Start that track first, whatever the engineering plan says.</p></div>
 
 <h3>The first week on a track</h3>
 <p>The same for everyone, and worth not skipping. Clone, run <code>make test</code>, and watch the seven simulator scenarios pass. Read document 2 for the wire format and document 3 for your component. Then take one order from a simulated day and follow it end to end:</p>
-<pre><code>make test                                    # everything green before you change anything
-python3 tools/loginspect.py stats build/sim/random-day/core.jnl
-python3 tools/loginspect.py chain build/sim/random-day/core.jnl &lt;seq of a fill&gt;
-make bench                                   # your component will add a row here</code></pre>
-<p>That chain command prints the order's life as a waterfall: client order, risk decision, route decision, child order, venue ack, fill, client report, each with the time it took. Once that reads as obvious, so does the codebase.</p>
+<pre><code>make test                       # everything green before you change anything
+J=build/sim/random-day/core.jnl
+python3 tools/loginspect.py stats $J                      # what a simulated day contains
+python3 tools/loginspect.py dump  $J --template ExecReport --limit 5   # pick a seq from column one
+python3 tools/loginspect.py chain $J &lt;that seq&gt;           # that order's whole life
+make bench                      # your component will add a row here</code></pre>
+<p>The chain command prints the order as a waterfall with the time between each step. Most chains are three hops, because most execution reports are an acknowledgement or a reject: the client's order, the risk decision, and the report the client got. A filled order is five: the client's order, the risk decision that accepted it, the child order the router sent, the venue's execution report, and the client-facing report the order manager derived from it. Pick a few seq numbers from the dump until you get a five-hop one. Two details are worth noticing on the first read, because they are the whole architecture in miniature. The route decision is not in the chain even though it exists, because a child order's cause is the risk decision that allowed it rather than the plan that shaped it. And the last hop is the only one a client ever sees. Once that reads as obvious, so does the codebase.</p>
 <p>Each track then has a first item chosen to be self-contained and to teach the contracts, rather than to be on the critical path.</p>
 <div class="tablewrap">
 <table>
@@ -262,8 +267,8 @@ make bench                                   # your component will add a row her
 <tr><td class="id">RT-7</td><td>Session placement over <code>VenueSessionStatus</code>: least loaded with throttle headroom, symbol affinity, saturation as a cost not a wall</td><td class="dep">RT-1, VG-1</td><td class="wk">2</td><td>Session-drop drill re-plans onto survivors; a throttled session is avoided rather than queued behind</td></tr>
 <tr><td class="id">RT-8</td><td>Latency-aware release: per-venue offsets from measured one-way latency so children land together</td><td class="dep">RT-2</td><td class="wk">2</td><td>Arrival spread across venues measured in the simulator is inside a stated bound</td></tr>
 <tr><td class="id">RT-9</td><td>Re-planning: on child reject, cancel or partial fill with quantity left, re-enter the strategy with the remainder and current books</td><td class="dep">RT-2</td><td class="wk">2</td><td>Re-route budget and give-up path exercised; no parent is left with leaves and no plan</td></tr>
-<tr><td class="id">RT-10</td><td>TCA pipeline in Python: per-order and per-child mark-outs from the log, producing <code>VenueScorecard</code> published through the control plane</td><td class="dep">RT-6, PK-1, CO-9</td><td class="wk">4</td><td>Scorecards regenerate from a recorded day deterministically; the router consumes them and the change is visible in decisions</td></tr>
-<tr><td class="id">RT-11</td><td>Regulation NMS behaviour: protected-quote handling, locked and crossed markets, ISO only where permitted, with the checks as assertions in the harness</td><td class="dep">RT-2, RT-5</td><td class="wk">3</td><td>Property test over random book states finds no trade-through and no improper ISO; reviewed against the rule text with compliance</td></tr>
+<tr><td class="id">RT-10</td><td>Transaction-cost analysis (TCA) in Python: per-order and per-child mark-outs from the log, producing <code>VenueScorecard</code> published through the control plane</td><td class="dep">RT-6, PK-1, CO-9</td><td class="wk">4</td><td>Scorecards regenerate from a recorded day deterministically; the router consumes them and the change is visible in decisions</td></tr>
+<tr><td class="id">RT-11</td><td>Regulation NMS (national market system) behaviour: protected-quote handling, locked and crossed markets, ISO only where permitted, with the checks as assertions in the harness</td><td class="dep">RT-2, RT-5</td><td class="wk">3</td><td>Property test over random book states finds no trade-through and no improper ISO; reviewed against the rule text with compliance</td></tr>
 </table>
 </div>
 
@@ -328,7 +333,7 @@ make bench                                   # your component will add a row her
 </div>
 
 <h2 id="t-pl">Platform, transport and failover <span class="path hot">core/seq</span> <span class="path cold">ops/</span></h2>
-<div class="track"><h3>PL</h3><span class="pill block">Blocks go-live</span><span class="tag">40 engineer-weeks &middot; 2 engineers, one of them infrastructure</span></div>
+<div class="track"><h3>PL</h3><span class="pill block">Blocks go-live</span><span class="tag">45 engineer-weeks &middot; 2 to 3 engineers, one of them infrastructure</span></div>
 <p>Design in document 3, platform section. Today everything runs in one process. This track is what turns it into a deployable system with a failover story someone has rehearsed. It is largely independent of the component tracks, which is why it can run alongside them from week one.</p>
 <div class="tablewrap">
 <table class="items">
@@ -345,7 +350,8 @@ make bench                                   # your component will add a row her
 <tr class="blocked"><td class="id">PL-10</td><td>Clock discipline: PTP or GPS-backed time on every host, drift monitored, <code>ClockSync</code> sequenced so offsets are on the log and replayable. Regulatory, not cosmetic: the consolidated audit trail requires business clocks synchronised to the national standard within a stated tolerance, with the drift evidence retained</td><td class="dep">PL-1</td><td class="wk">2</td><td>Every host's offset is on the log continuously; an injected drift beyond tolerance pages; the retained evidence answers a clock-synchronisation enquiry</td></tr>
 <tr><td class="id">PL-11</td><td>Timer service: a component asks for a timer and the sequencer emits a <code>Timer</code> message when it fires, so replay sees the same timer at the same sequence position</td><td class="dep">PL-1</td><td class="wk">2</td><td>An order expiry or strategy timer replays identically; no component reads a wall clock to schedule anything</td></tr>
 <tr><td class="id">PL-12</td><td>Alerting and component health: <code>Alert</code> and <code>ComponentStatus</code> consumed and routed to on-call, a runbook per alert code, every component's health on one page</td><td class="dep">PL-4</td><td class="wk">3</td><td>Every alert code an engine can emit has a runbook; an injected failure pages the right person with the right page</td></tr>
-<tr><td class="id">PL-13</td><td>Capacity and soak: replay the busiest recorded opens at full rate and faster, and run a multi-day soak, to find the queue depth, journal growth and memory behaviour an average day never shows</td><td class="dep">PL-2, MD-8</td><td class="wk">3</td><td>Stated headroom over the peak observed message rate with no reader falling behind, and no unbounded growth over a week</td></tr>
+<tr><td class="id">PL-13</td><td>Capacity and soak, in two dimensions. Rate: replay the busiest recorded opens at full speed and faster, to find the queue depth, journal growth and memory behaviour an average day never shows. Size: run the full listed universe rather than the ten-symbol fixture, because book ladders, the ticker index and the snapshot all scale with it and nothing has yet been run at that width</td><td class="dep">PL-2, MD-8</td><td class="wk">4</td><td>Stated headroom over the peak observed message rate with no reader falling behind, no unbounded growth over a week, and a full-universe day within the memory and start-up budget</td></tr>
+<tr><td class="id">PL-14</td><td>Client test environment: a permanently available copy of the stack with simulated venues, seeded accounts and yesterday's reference data, that clients and our own certification run against. Assumed by <code>CG-6</code>, <code>AC-4</code> and every venue conformance run, and previously owned by nobody</td><td class="dep">PL-2, CP-2</td><td class="wk">4</td><td>A client certifies against it without an engineer present, and it is rebuilt from scratch by a scheduled job rather than by hand</td></tr>
 </table>
 </div>
 
@@ -385,12 +391,12 @@ make bench                                   # your component will add a row her
 <tr><td class="id">CO-1</td><td>Cash ledger: double entry per account and currency, every movement tied to a log event or an approved manual entry</td><td class="dep">PK-3</td><td class="wk">5</td><td>Every account balances every day; an unbalanced entry is impossible by construction</td></tr>
 <tr><td class="id">CO-2</td><td>Clearing firm adapter: trade, position and cash files out, breaks in, behind an interface that self-clearing later replaces</td><td class="dep">CO-1</td><td class="wk">5</td><td>A full simulated day produces files the clearing firm accepts in their test environment</td></tr>
 <tr><td class="id">CO-3</td><td>Allocation for institutional clients: block to sub-accounts, same-day affirmation for T+1, refusal to close the day with an unaffirmed trade</td><td class="dep">CO-2</td><td class="wk">4</td><td>Allocation round-trip with a test counterparty; the end-of-day job blocks and pages on an unaffirmed trade</td></tr>
-<tr><td class="id">CO-4</td><td>Consolidated audit trail extraction: every order event with the required linkages derived from the cause chain, submitted through a reporting agent. Sized for the specification's edge cases and the correction cycle, which is where this work actually goes</td><td class="dep">RT-1, CG-3, PL-10</td><td class="wk">8</td><td>The agent accepts a full simulated day; our events reconcile against the venues' own reported events</td></tr>
+<tr><td class="id">CO-4</td><td>Consolidated audit trail (CAT) extraction: every order event with the required linkages derived from the cause chain, submitted through a reporting agent. Sized for the specification's edge cases and the correction cycle, which is where this work actually goes</td><td class="dep">RT-1, CG-3, PL-10</td><td class="wk">8</td><td>The agent accepts a full simulated day; our events reconcile against the venues' own reported events</td></tr>
 <tr><td class="id">CO-5</td><td>Best execution: per-order TCA against the NBBO at arrival and each child release, quarterly Rule 605 and 606 reports, committee pack</td><td class="dep">RT-10, CO-9</td><td class="wk">5</td><td>Reports generate from the log with no manual step and are reviewed by counsel before the first filing</td></tr>
 <tr><td class="id">CO-6</td><td>Reg SHO evidence: locate chain per short sale, close-out clock, Rule 201 records, threshold handling</td><td class="dep">SL-2</td><td class="wk">4</td><td>Every short sale in a simulated day resolves to a locate with a named source; an injected failure is caught by the daily job</td></tr>
 <tr><td class="id">CO-7</td><td>Surveillance: vendor package integrated, fed from the log, plus the in-house check for the market maker trading ahead of client flow</td><td class="dep">CO-4, CO-9</td><td class="wk">3</td><td>Vendor ingests a full day; the in-house check detects an injected case and produces a reviewable alert</td></tr>
 <tr><td class="id">CO-8</td><td>Records retention: write-once storage for journals and captures, with a tested retrieval procedure</td><td class="dep">PL-9</td><td class="wk">2</td><td>A regulator-style request for a specific day and order is answered inside the stated time in a drill</td></tr>
-<tr><td class="id">CO-9</td><td>Tick store and research data: the day's journals and captures converted to columnar files and loaded into a query engine, using the generated Arrow schema so a log becomes a table with one function</td><td class="dep">MD-6, PK-3</td><td class="wk">4</td><td>A day is queryable the next morning without hand-holding, and transaction-cost analysis, surveillance and the execution-quality reports all read from it rather than re-parsing journals</td></tr>
+<tr><td class="id">CO-9</td><td>Tick store and research data: the day's journals and captures converted to columnar files and loaded into a query engine, using the generated Arrow schema so a log becomes a table with one function</td><td class="dep">MD-6, PK-3</td><td class="wk">4</td><td>A day is queryable the next morning without hand-holding, and TCA, surveillance and the execution-quality reports all read from it rather than re-parsing journals</td></tr>
 </table>
 </div>
 
@@ -405,6 +411,19 @@ make bench                                   # your component will add a row her
 <tr><td class="id">SL-3</td><td>Borrow booking on short-sale execution, with the buy-in workflow when a borrow fails</td><td class="dep">SL-2, PK-1</td><td class="wk">4</td><td>A failed borrow removes the symbol from ETB, alerts the desk and starts the clock, in a drill</td></tr>
 <tr><td class="id">SL-4</td><td>Recalls and buy-ins, collateral marking, rate publication</td><td class="dep">SL-3</td><td class="wk">4</td><td>Recall to replacement or buy-in runs end to end against the deadline</td></tr>
 <tr><td class="id">SL-5</td><td>Lender platform integrations and the lending desk's offer side</td><td class="dep">SL-4</td><td class="wk">6</td><td>Two external lenders integrated; the desk books a loan and earns a fee in a test environment</td></tr>
+</table>
+</div>
+
+<h2 id="t-op">Operating the business <span class="path cold">ops/</span></h2>
+<div class="track"><h3>OP</h3><span class="pill block">Blocks go-live</span><span class="tag">7 engineer-weeks &middot; shared between infrastructure and operations, not a full-time track</span></div>
+<p>The plan above ends at go-live, which is the point at which the real work starts. These items are what makes day two survivable, and they have to exist before day one rather than after it. Most of this is not engineering, but each piece has an engineering dependency, so it belongs here rather than in the non-software section.</p>
+<div class="tablewrap">
+<table class="items">
+<tr><th>ID</th><th>Item</th><th>Depends on</th><th>Wk</th><th>Done when</th></tr>
+<tr><td class="id">OP-1</td><td>On-call and incident process: a rotation with a real pager, severity definitions, a runbook for every alert code an engine can emit, and a written post-incident review habit</td><td class="dep">PL-12</td><td class="wk">3</td><td>A drill page at three in the morning reaches someone who resolves it from the runbook alone; the review of that drill is written up</td></tr>
+<tr><td class="id">OP-2</td><td>Client support: how a client reports a problem, how a disputed fill is answered from the log, and the turnaround we promise</td><td class="dep">PL-5, CG-4</td><td class="wk">2</td><td>A disputed order is answered from a replay with the evidence attached, inside the promised time, by someone who is not the engineer who built it</td></tr>
+<tr><td class="id">OP-3</td><td>Launch and rollback plan: the staged widening by client, venue and size, what each stage has to show before the next, and the specific conditions under which we stop accepting orders and unwind</td><td class="dep">CP-4</td><td class="wk">1</td><td>The rollback is rehearsed in the test environment, and the stop conditions are numbers rather than judgement calls</td></tr>
+<tr><td class="id">OP-4</td><td>The drill and review calendar: failover monthly, disaster recovery quarterly, kill switch monthly in a test symbol, capacity review each quarter, with owners and dates</td><td class="dep">PL-3, PL-9</td><td class="wk">1</td><td>The calendar exists with named owners, and the first cycle of each has been run before go-live rather than promised</td></tr>
 </table>
 </div>
 
@@ -439,7 +458,7 @@ make bench                                   # your component will add a row her
 </div>
 
 <h2 id="tracks">Tracks and staffing</h2>
-<p>Eleven tracks, of which eight can start immediately because they depend on nothing that does not already exist. That is the point of the contracts in <a href="#rules">the rules section</a>: an engineer can build against the sequenced log and the simulator without waiting for the component that will eventually feed them.</p>
+<p>Twelve tracks, of which eight can start immediately because they depend on nothing that does not already exist. That is the point of the contracts in <a href="#rules">the rules section</a>: an engineer can build against the sequenced log and the simulator without waiting for the component that will eventually feed them.</p>
 <div class="tablewrap">
 <table>
 <tr><th>Track</th><th>Can start</th><th>People</th><th>Skills</th><th>Blocking weeks</th></tr>
@@ -449,21 +468,22 @@ make bench                                   # your component will add a row her
 <tr><td>CG client gateways</td><td>Now</td><td class="num">1</td><td>C++, FIX, session semantics</td><td class="num">14</td></tr>
 <tr><td>AC accounts and onboarding</td><td>After CP-1</td><td class="num">1&ndash;2</td><td>Go, workflow, vendor integration</td><td class="num">12</td></tr>
 <tr><td>PK position keeper</td><td>Now</td><td class="num">2</td><td>One C++ for the hot view, one Go for the ledger</td><td class="num">16</td></tr>
-<tr><td>PL platform</td><td>Now</td><td class="num">2&ndash;3</td><td>C++ and Aeron, Linux performance, SRE</td><td class="num">40</td></tr>
+<tr><td>PL platform</td><td>Now</td><td class="num">2&ndash;3</td><td>C++ and Aeron, Linux performance, SRE</td><td class="num">45</td></tr>
 <tr><td>CP control plane and security master</td><td>Now</td><td class="num">2</td><td>Go, Postgres, data pipelines</td><td class="num">22</td></tr>
 <tr><td>MG margin</td><td>After PK-1</td><td class="num">1</td><td>Go, and someone who has read Reg T</td><td class="num">8</td></tr>
 <tr><td>CO post-trade and compliance</td><td>Now (CO-1)</td><td class="num">3</td><td>Go and Python, accounting discipline, regulatory reading</td><td class="num">40</td></tr>
 <tr><td>SL stock loan</td><td>Now</td><td class="num">2</td><td>Go, securities lending domain</td><td class="num">14</td></tr>
+<tr><td>OP operating the business</td><td>After PL-12</td><td class="num">shared</td><td>Infrastructure and operations, not a full-time track</td><td class="num">7</td></tr>
 <tr><td>CR core follow-ups</td><td>Now</td><td class="num">&mdash;</td><td>Anyone, between larger items</td><td class="num">5</td></tr>
-<tr class="total"><td>Go-live blocking</td><td></td><td class="num">~16</td><td></td><td class="num">256</td></tr>
+<tr class="total"><td>Go-live blocking</td><td></td><td class="num">~17</td><td></td><td class="num">268</td></tr>
 <tr><td>MM market making</td><td>After go-live</td><td class="num">3</td><td>C++ and a quantitative researcher</td><td class="num">28</td></tr>
 <tr><td>SL-4, SL-5 lending desk</td><td>After go-live</td><td class="num">2</td><td>Go, lender integrations</td><td class="num">10</td></tr>
 <tr><td>AC-5 web and mobile client</td><td>After go-live</td><td class="num">1&ndash;2</td><td>TypeScript</td><td class="num">8</td></tr>
 <tr><td>MD-12, CR-4 to CR-6</td><td>Either side</td><td class="num">&mdash;</td><td></td><td class="num">9</td></tr>
 </table>
 </div>
-<p>Sixteen engineers is the shape that finishes the blocking work in about a year. With eight, the same work takes closer to eighteen months and the non-software track stops being the binding constraint, which is a worse position to be in rather than a better one. If the team is smaller than eight, cut scope instead of stretching the schedule: launch on one venue instead of four, agency only with short selling disabled, and a binary API with no FIX. That is still a real product and it removes about 60 weeks.</p>
-<p>One thing the headcount column hides: hiring sixteen people is itself a six-month project, and hot-path C++ engineers with exchange-protocol experience are the scarcest of them. The schedule above starts when the team is in place, not when the requisitions open.</p>
+<p>Seventeen engineers is the shape that finishes the blocking work in about a year. With eight, the same work takes closer to eighteen months and the non-software track stops being the binding constraint, which is a worse position to be in rather than a better one. If the team is smaller than eight, cut scope instead of stretching the schedule: launch on one venue instead of four, agency only with short selling disabled, and a binary API with no FIX. That is still a real product and it removes about 60 weeks.</p>
+<p>One thing the headcount column hides: hiring seventeen people is itself a six-month project, and hot-path C++ engineers with exchange-protocol experience are the scarcest of them. The schedule above starts when the team is in place, not when the requisitions open.</p>
 
 <h2 id="path">Critical path</h2>
 <p>The chain that decides the date runs through market data. Nothing in the router can be built against a synthetic book once the real one exists, and best-execution reporting cannot be finished until the router is. Everything else parallelises around it.</p>
@@ -550,10 +570,20 @@ make bench                                   # your component will add a row her
 <div class="box"></div><div><p><strong>Regulatory reporting proved end to end.</strong> CAT accepted by the agent for a full simulated day and reconciled against venue-reported events; 605 and 606 generated and reviewed by counsel.</p><p class="who">Chief compliance officer</p></div>
 <div class="box"></div><div><p><strong>Locates are real.</strong> If short selling is enabled at launch, every short sale in the parallel run resolves to a granted locate with a named source, with no assume-available path in the code.</p><p class="who">Chief compliance officer</p></div>
 <div class="box"></div><div><p><strong>Registration effective, clearing live, capital held.</strong> The firm is approved, the clearing agreement is executed, and net capital is in place with headroom.</p><p class="who">Chief executive, chief financial officer, chief compliance officer</p></div>
+<div class="box"></div><div><p><strong>The way out is rehearsed.</strong> The staged widening is written with numeric stop conditions, and the rollback to accepting no orders has been executed in the test environment by the people who would have to do it live.</p><p class="who">Head of trading, engineering lead</p></div>
 <div class="box"></div><div><p><strong>Operations can run the day.</strong> Every runbook executed end to end by someone who did not write it, including a start of day, an end of day, a break, a halt and an incident.</p><p class="who">Operations lead</p></div>
 <div class="box"></div><div><p><strong>Security reviewed.</strong> External penetration test with no critical finding outstanding, four-eyes enforced on limits and deployments, operator actions auditable from the log.</p><p class="who">Infrastructure lead, compliance</p></div>
 </div>
 <p>Launch shape once the gates are green: one client, one venue, small size, for a week, with the kill switch in a hand that is on the desk. Then widen by client, then by venue, then by size, with a week of evidence between each step.</p>
+
+<h2 id="scope">What this plan does not cover</h2>
+<p>Stated so nobody assumes it is handled somewhere in the tables above.</p>
+<ul>
+<li><strong>Money.</strong> There is no budget dimension here at all. Document 1 notes that co-location, market-data licences, vendor fees and regulatory capital together typically exceed the engineering payroll, and none of that is in the engineer-week totals. A delivery plan and a financial plan are different documents; this is the first one, and the second one needs to exist before the first is approved.</li>
+<li><strong>What we trade and for whom.</strong> The client set, the pricing, the venue set at launch and whether short selling is enabled on day one are business decisions that change the scope materially. The plan flags where each one lands (<code>SL</code> for short selling, <code>VG-5</code> to <code>VG-7</code> for the venue set) but does not make the call.</li>
+<li><strong>The legal entity.</strong> Formation, capitalisation, the operating agreement, the supervisory structure and who holds which registration are counsel's work and appear here only as the dependency in <a href="#nonsw">the non-software track</a>.</li>
+<li><strong>Market-making strategy.</strong> The <code>MM</code> track builds the engine that runs a model. What the model should be is research, it happens after go-live, and it is not sized here.</li>
+</ul>
 
 <h2 id="risks">What will go wrong</h2>
 <p>Named so the team recognises them early rather than discovering them.</p>
@@ -565,7 +595,7 @@ make bench                                   # your component will add a row her
 <li><strong>Determinism erosion.</strong> The first component someone writes with a map iteration, a wall clock, or an unordered container in a state hash breaks replay, and it will not fail loudly. The checkpoint-hash comparison across builds is what catches it; keep it in CI and treat a divergence as a stop-work.</li>
 <li><strong>The tail, not the median.</strong> Clients measure the worst fifty in a hundred thousand. Every allocation, every syscall and every lock that creeps onto the order path shows up there and nowhere else. The benchmark gates exist for this; do not let them go informational on the pinned host.</li>
 <li><strong>Scope creep into market making.</strong> It is the most interesting work in the building and it is deliberately after launch. Adding it early costs the launch date and doubles the compliance surface at exactly the moment the firm has no track record to defend it with.</li>
-<li><strong>Hiring is the first dependency, and the plan is silent about it.</strong> Every estimate here starts when the engineer exists. Sixteen people, several of them hot-path C++ engineers with exchange-protocol experience, is a six-month recruiting programme in a thin market, and a track that starts three months late finishes three months late. Sequence the hiring to the critical path: market data and platform first, compliance and post-trade next, market making last.</li>
+<li><strong>Hiring is the first dependency, and the plan is silent about it.</strong> Every estimate here starts when the engineer exists. Seventeen people, several of them hot-path C++ engineers with exchange-protocol experience, is a six-month recruiting programme in a thin market, and a track that starts three months late finishes three months late. Sequence the hiring to the critical path: market data and platform first, compliance and post-trade next, market making last.</li>
 <li><strong>The plan's own blind spots.</strong> The first draft of this document omitted the accounts and onboarding component entirely, left clock synchronisation, timers, alert routing and capacity testing without an owner, and stated a headline number that contradicted its own staffing table. All are corrected above. The lesson is not that those items were hard; it is that a plan assembled from component designs inherits their silences. Re-read this document against document 1's component list each quarter and ask what has no id.</li>
 <li><strong>Key-person concentration.</strong> Every track above has one owner. Write down what each of them knows that is not in the repository, and pair on the sequencer, the risk engine and the clearing adapter specifically.</li>
 </ul>
