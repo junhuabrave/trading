@@ -29,7 +29,10 @@ jobs:
           make test CXX=clang++-18 CC=clang-18 \
             CXXFLAGS="-std=c++23 -O1 -g -stdlib=libc++ -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Werror -pedantic"
         env:
-          ASAN_OPTIONS: detect_leaks=0
+          # alloc_dealloc_mismatch: Ubuntu's packaged libc++/libc++abi free exception objects with a
+          # different allocator than clang-18's ASan runtime records; a false positive inside
+          # std::runtime_error's destructor, not our code
+          ASAN_OPTIONS: detect_leaks=0:alloc_dealloc_mismatch=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       - name: fuzz journal recovery and snapshot loader
         run: make fuzz CXX=clang++-18 CC=clang-18 FUZZ_SECONDS=60
