@@ -6,6 +6,7 @@
 #include "refdata.hpp"
 #include <vector>
 #include <random>
+#include <new>
 
 using namespace trading; using namespace trading::refdata; using namespace trading::bench; using trading::util::AllocScope;
 
@@ -35,9 +36,12 @@ int main(int argc, char** argv) {
     { Recorder r(B, N / B); AllocScope a;
       for (size_t i = 0; i + B <= N; i += B) { r.begin(); for (size_t k = 0; k < B; ++k) accepted += check(i + k); r.end(); }
       uint64_t al = a.delta(); report("refdata.decode_dispatch_checks", r.finish(), al, "decode + dispatch + 5 reference-data checks per order"); }
-    Frame<ListUpdate> lu; lu.init(); lu.body.listId = ListId::EasyToBorrow;
+    // the frame sits in a buffer large enough for any message: apply() is inlined and GCC otherwise
+    // reasons about the (never taken) larger-message branches reading past a Frame<ListUpdate>
+    alignas(16) std::byte lubuf[sizeof(FrameHeader) + MAX_BLOCK_LENGTH]{};
+    auto* lu = new (lubuf) Frame<ListUpdate>; lu->init(); lu->body.listId = ListId::EasyToBorrow;
     { Recorder r(B, N / B); AllocScope a;
-      for (size_t i = 0; i + B <= N; i += B) { r.begin(); for (size_t k = 0; k < B; ++k) { lu.body.symbolIdx = uint32_t(1 + (i + k) % 10); lu.body.op = ((i + k) & 1) ? ListOp::Add : ListOp::Remove; rd.apply(&lu.header); } r.end(); }
+      for (size_t i = 0; i + B <= N; i += B) { r.begin(); for (size_t k = 0; k < B; ++k) { lu->body.symbolIdx = uint32_t(1 + (i + k) % 10); lu->body.op = ((i + k) & 1) ? ListOp::Add : ListOp::Remove; rd.apply(&lu->header); } r.end(); }
       uint64_t al = a.delta(); report("refdata.apply_list_update", r.finish(), al); }
     { std::vector<double> v; AllocScope a; for (int i = 0; i < 50; ++i) { int64_t t0 = nowNs(); auto sh = rd.stateHash(); int64_t t1 = nowNs(); v.push_back(double(t1 - t0)); (void)sh; }
       uint64_t al = a.delta(); report("refdata.state_hash", percentiles(v), al, "checkpoint cost, whole hot arrays"); }
