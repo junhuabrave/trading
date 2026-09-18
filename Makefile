@@ -2,7 +2,7 @@
 CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra -Werror -pedantic
-B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512
+B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DBLAKE3_USE_NEON=0
 INC       = -Igen/cpp -Icore/refdata -Icore/seq -Icore/risk -Ithird_party/blake3
 B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 

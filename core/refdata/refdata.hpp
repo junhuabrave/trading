@@ -5,6 +5,7 @@
 #pragma once
 #include "snapshot.hpp"
 #include "blake3.h"
+#include <algorithm>
 #include <vector>
 #include <array>
 

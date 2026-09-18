@@ -9,7 +9,8 @@ Everything here is exercised by one command:
     make test      # generate codecs, check schema, build C++, run all round-trip and determinism tests
     make bench     # rough single-core numbers for decode/dispatch and reference lookups
 
-Requires g++ 13+ (C++23), python3 with `blake3` (`pip install blake3`).
+Requires g++ 13+ or clang 17+ (C++23), python3 with `blake3` (`pip install blake3`).
+On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a working SDK).
 
 ## What is here
 

@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <functional>
 #include <unistd.h>
+#include <fcntl.h>
 
 namespace trading::seq {
 
@@ -69,7 +70,7 @@ public:
     // replay() flushes the writer's buffer itself. Durable commit is a policy choice
     // (per batch on NVMe in production, at checkpoints in tests).
     void commit(bool durable) {
-        if (durable) { std::fflush(fp_); ::fdatasync(::fileno(fp_)); }
+        if (durable) { std::fflush(fp_); syncData(::fileno(fp_)); }
     }
 
     // Replay frames with fromSeq <= seq <= toSeq (toSeq 0 = to end) into cb. Returns count.
@@ -104,6 +105,16 @@ public:
 
 private:
     struct IndexEntry { uint64_t seq; uint64_t offset; };
+
+    // Durable data sync. fdatasync is Linux; macOS has no fdatasync and its fsync does not
+    // flush the drive cache, so F_FULLFSYNC is the equivalent there.
+    static void syncData(int fd) noexcept {
+#if defined(__APPLE__)
+        if (::fcntl(fd, F_FULLFSYNC) != 0) ::fsync(fd);
+#else
+        ::fdatasync(fd);
+#endif
+    }
 
     void recover() {
         std::fseek(fp_, 0, SEEK_END); long fileLen = std::ftell(fp_);
