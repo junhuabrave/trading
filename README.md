@@ -33,6 +33,8 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 | `tools/schema_check.py OLD NEW` | Compatibility checker: append-only fields, frozen ids and offsets, frozen FrameHeader, version bump required. Exit 1 on any violation. |
 | `tools/snapshot.py` | Reference-data snapshot: `build` from a JSON fixture with validation, `verify` (BLAKE3 section and content hashes plus semantic checks), `dump`, and `diff OLD NEW out.log` which emits the sequenced update messages that turn OLD into NEW. |
 | `core/refdata/snapshot.hpp` | mmap loader: verifies magic, format, schema version, file size, every section hash and the content hash before any engine reads a byte. Typed section access, ticker lookup for the edge. |
+| `core/md/identity.hpp` | What identifies a market-data message: the feed it came from and the sequence that feed's venue assigned, never one of ours. Two handlers of the same feed therefore produce identical streams, and a consumer can fail over between publishers with no gap and no duplicate. |
+| `core/util/money.hpp` | Money on the wire is int64, which at 1e-8 units tops out at $92.2bn. The two messages carrying a firm-wide aggregate say which unit they used; engines work in 1e-8 in 128 bits, and the only hard ceiling left is what an `ExposureSnapshot` can carry, about $922 trillion. |
 | `core/refdata/refdata.hpp` | Engine-side struct-of-arrays view: `load(snapshot)` at start of day, `apply(frame)` for `SymbolAdd`, `SymbolUpdate`, `ListUpdate`, `ShortSaleRestriction`, `TickTableUpdate`; O(1) hot accessors; `stateHash()` for checkpoints. No allocation after construction. |
 | `core/util/flatmap.hpp` | Open-addressing tables keyed by our 64-bit ids (backward-shift delete, no tombstones) and a 64-bit fingerprint set; the order-path replacement for `std::unordered_map`. |
 | `core/seq/journal.hpp` | Append-only, segmented frame journal per stream: a directory of 1 GiB segments (configurable), each validated on open, torn tail truncated on the last one, sparse index for replay-from-seq across segments. |
@@ -108,6 +110,10 @@ reviewed change.
     risk evaluate, full check list, accept path:      ~42 ns per order; ~136 ns with the cancel/close path
                                                       (the day-long duplicate-clOrdId set costs one cache miss per order)
     oms transition (order, decision, child, ack, fill): ~18 ns per sequenced frame, zero allocations
+
+Throughput figures on an unpinned laptop swing by about half between runs of the same binary, which
+is why `tools/bench.py` gates p99.9 only against a baseline recorded with `--pinned`, and why the
+delivery plan has an item for a pinned CI runner.
     ring hand-off across threads:                     not measurable on one core; needs a pinned two-core host
 
 ## Schema evolution in practice
@@ -119,10 +125,6 @@ frame's zero-default as a kill. That is the whole workflow for every future fiel
 
 ## Known limits to fix before production
 
-* Money and notional are int64 in 1e-8 units, so any single aggregate caps at $92 billion.
-  Per-account that is fine; firm-wide gross exposure at a large broker is not. The
-  engine computes in 128-bit and rejects at a hard ceiling rather than overflowing, but
-  the aggregate fields should move to 1e-4 units (or 128-bit) in the next schema version.
 * SSR handling rejects rather than re-pricing the short sale to bid + one tick, which is
   what most brokers do; re-pricing needs the OMS.
 

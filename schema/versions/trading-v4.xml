@@ -20,7 +20,7 @@
     strings fixed char[N], null padded, ASCII, reference/cold path only
 -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
-    package="trading" id="1" version="5"
+    package="trading" id="1" version="4"
     semanticVersion="2026.09" description="Broker-dealer trading stack schema"
     byteOrder="littleEndian" headerType="FrameHeader">
   <types>
@@ -234,10 +234,6 @@
       <validValue name="Int">1</validValue>
       <validValue name="Fixed8">2</validValue>
       <validValue name="Bool">3</validValue>
-    </enum>
-    <enum name="MoneyScale" encodingType="uint8" description="what this message's aggregate Money fields mean. Unset is 1e-8, which is what every message written before v5 meant">
-      <validValue name="Unit1e8">1</validValue>
-      <validValue name="Unit1e4">2</validValue>
     </enum>
     <enum name="MdQuality" encodingType="uint8" description="what a market-data source currently provides">
       <validValue name="Depth">1</validValue>
@@ -955,8 +951,7 @@
     <field name="maxOpenOrders"  id="9" type="uint32"/>
     <field name="operatorId"     id="10" type="uint32"/>
     <field name="dupWindowMs"    id="11" type="uint32" sinceVersion="3" description="reject an identical order (symbol, side, qty, price) within this window; 0 = off"/>
-    <field name="pad"            id="12" type="uint8" length="19"/>
-    <field name="moneyScale"     id="13" type="MoneyScale" sinceVersion="5" description="unit of maxGrossExposure and maxNetExposure"/>
+    <field name="pad"            id="12" type="uint8" length="20"/>
   </sbe:message>
 
   <sbe:message name="BuyingPowerUpdate" id="401" blockLength="32">
@@ -975,8 +970,7 @@
     <field name="openOrderNotional" id="5" type="Money"/>
     <field name="openOrders"     id="6" type="uint32"/>
     <field name="pad2"           id="7" type="Pad4"/>
-    <field name="pad3"           id="8" type="uint8" length="7"/>
-    <field name="moneyScale"     id="9" type="MoneyScale" sinceVersion="5" description="unit of grossExposure, netExposure and openOrderNotional"/>
+    <field name="pad3"           id="8" type="Pad8"/>
   </sbe:message>
 
   <sbe:message name="MarginCall" id="403" blockLength="48">

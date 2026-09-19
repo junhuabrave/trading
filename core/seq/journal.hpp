@@ -90,7 +90,8 @@ public:
     }
 
     // Replay frames with fromSeq <= seq <= toSeq (toSeq 0 = to end) into cb. Returns count.
-    uint64_t replay(uint64_t fromSeq, uint64_t toSeq, const std::function<void(const FrameHeader*)>& cb) const {
+    template <class F>
+    uint64_t replay(uint64_t fromSeq, uint64_t toSeq, F&& cb) const {
         uint64_t n = 0;
         replayWhile(fromSeq, [&](const FrameHeader* f) {
             if (toSeq && f->seq > toSeq) return false;
@@ -103,7 +104,10 @@ public:
     // 0 if none. This is what lets a consumer stop at a watermark it can only recognise from the
     // frame itself (a venue sequence, say) without scanning to the end of the journal.
     // Reads through separate FILE handles so it never disturbs the writer's position.
-    uint64_t replayWhile(uint64_t fromSeq, const std::function<bool(const FrameHeader*)>& cb) const {
+    // Templated on the callback: a std::function here costs an allocation per call, which the
+    // benchmark's allocation guard catches and which the gap-refill path should not pay.
+    template <class F>
+    uint64_t replayWhile(uint64_t fromSeq, F&& cb) const {
         if (fromSeq < firstSeq()) fromSeq = firstSeq();
         if (fromSeq > lastSeq_) return 0;
         std::fflush(fp_);                                   // make the buffered tail visible to the read handles

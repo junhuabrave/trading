@@ -17,7 +17,8 @@ gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/tr
 check:
 	python3 tools/schema_check.py schema/versions/trading-v1.xml schema/versions/trading-v2.xml
 	python3 tools/schema_check.py schema/versions/trading-v2.xml schema/versions/trading-v3.xml
-	python3 tools/schema_check.py schema/versions/trading-v3.xml schema/trading.xml
+	python3 tools/schema_check.py schema/versions/trading-v3.xml schema/versions/trading-v4.xml
+	python3 tools/schema_check.py schema/versions/trading-v4.xml schema/trading.xml
 
 build:
 	mkdir -p build

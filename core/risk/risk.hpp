@@ -12,6 +12,7 @@
 #pragma once
 #include "refdata.hpp"
 #include "flatmap.hpp"
+#include "money.hpp"
 #include <vector>
 #include <array>
 
@@ -22,12 +23,15 @@ using trading::util::FlatMap;
 using trading::util::Key128;
 
 struct Limits {
-    int64_t  maxOrderQty = 0, maxOrderNotional = 0, maxGrossExposure = 0, maxNetExposure = 0;
+    int64_t  maxOrderQty = 0, maxOrderNotional = 0;          // per order: 1e-8 units are ample
+    money::i128 maxGrossExposure = 0, maxNetExposure = 0;    // firm-wide sums: held wide, read with the message's unit
     uint32_t priceCollarBps = 0, maxMsgRate = 0, maxOpenOrders = 0, dupWindowMs = 0;
     bool     set = false;
     void from(const LimitUpdate& m) noexcept {
-        maxOrderQty = m.maxOrderQty; maxOrderNotional = m.maxOrderNotional; maxGrossExposure = m.maxGrossExposure;
-        maxNetExposure = m.maxNetExposure; priceCollarBps = m.priceCollarBps; maxMsgRate = m.maxMsgRate;
+        maxOrderQty = m.maxOrderQty; maxOrderNotional = m.maxOrderNotional;
+        maxGrossExposure = money::toNano(m.maxGrossExposure, m.moneyScale);
+        maxNetExposure = money::toNano(m.maxNetExposure, m.moneyScale);
+        priceCollarBps = m.priceCollarBps; maxMsgRate = m.maxMsgRate;
         maxOpenOrders = m.maxOpenOrders; dupWindowMs = m.dupWindowMs; set = true;
     }
 };
@@ -40,7 +44,7 @@ namespace Check {
         Replace = 1u << 16;
 }
 
-__extension__ typedef __int128 i128;   // exposure sums are computed wide so they can never overflow silently
+using money::i128;   // exposure sums are computed wide so they can never overflow silently
 
 class RiskEngine {
 public:
@@ -104,7 +108,8 @@ public:
         if (auto* m = as<ExposureSnapshot>(h)) {
             // The position keeper's view of position exposure re-bases ours; the open-order
             // fields are its reconciliation of our state, and ours stay authoritative.
-            if (m->accountIdx < MAX_ACCOUNTS) { auto& a = accounts_[m->accountIdx]; a.grossPosition = m->grossExposure; a.netPosition = m->netExposure; }
+            if (m->accountIdx < MAX_ACCOUNTS) { auto& a = accounts_[m->accountIdx];
+                a.grossPosition = money::toNano(m->grossExposure, m->moneyScale); a.netPosition = money::toNano(m->netExposure, m->moneyScale); }
             return true;
         }
         if (auto* m = as<ExecReport>(h)) { if (m->childOrderId == 0) onExec(*m); return true; }   // parent-level only; venue-level reports are the OMS's input
@@ -142,7 +147,8 @@ public:
     uint64_t rejects() const noexcept { return rejects_; }
     int64_t buyingPower(uint32_t acct) const noexcept { const auto& a = accounts_[acct]; return a.bpBase - a.bpCommitted; }
     uint32_t openOrders(uint32_t acct) const noexcept { return accounts_[acct].openOrders; }
-    int64_t grossExposure(uint32_t acct) const noexcept { const auto& a = accounts_[acct]; return a.grossPosition + a.openBuyNotional + a.openSellNotional; }
+    money::i128 grossExposure(uint32_t acct) const noexcept { const auto& a = accounts_[acct]; return a.grossPosition + a.openBuyNotional + a.openSellNotional; }
+    money::i128 netExposure(uint32_t acct) const noexcept { const auto& a = accounts_[acct]; return a.netPosition + a.openBuyNotional - a.openSellNotional; }
     int64_t position(uint32_t acct, uint32_t sym) const noexcept { const int64_t* p = positions_.find(key(acct, sym)); return p ? *p : 0; }
     int64_t locateRemaining(uint64_t id) const noexcept { const Locate* l = locates_.find(id); return l ? l->remaining : -1; }
     int64_t openLeaves(uint64_t orderId) const noexcept { const OpenOrder* o = openOrders_.find(orderId); return o ? o->leaves : -1; }
@@ -158,9 +164,9 @@ public:
             if (!a.known) continue;
             blake3_hasher_update(&hs, &i, 4);
             blake3_hasher_update(&hs, &a.bpBase, 8); blake3_hasher_update(&hs, &a.bpCommitted, 8);
-            blake3_hasher_update(&hs, &a.openOrders, 4); blake3_hasher_update(&hs, &a.openBuyNotional, 8);
-            blake3_hasher_update(&hs, &a.openSellNotional, 8); blake3_hasher_update(&hs, &a.grossPosition, 8);
-            blake3_hasher_update(&hs, &a.netPosition, 8); blake3_hasher_update(&hs, &a.killed, 1);
+            blake3_hasher_update(&hs, &a.openOrders, 4); blake3_hasher_update(&hs, &a.openBuyNotional, 16);
+            blake3_hasher_update(&hs, &a.openSellNotional, 16); blake3_hasher_update(&hs, &a.grossPosition, 16);
+            blake3_hasher_update(&hs, &a.netPosition, 16); blake3_hasher_update(&hs, &a.killed, 1);
         }
         blake3_hasher_update(&hs, &accepts_, 8); blake3_hasher_update(&hs, &rejects_, 8);
         size_t n1 = openOrders_.size(), n2 = locates_.size(), n3 = positions_.size();
@@ -172,8 +178,8 @@ public:
 private:
     struct DupEntry { uint64_t fp; int64_t ts; };
     struct Account {
-        Limits limits; int64_t bpBase = 0, bpCommitted = 0;
-        int64_t openBuyNotional = 0, openSellNotional = 0, grossPosition = 0, netPosition = 0;
+        Limits limits; int64_t bpBase = 0, bpCommitted = 0;              // per account: 1e-8 units are ample
+        money::i128 openBuyNotional = 0, openSellNotional = 0, grossPosition = 0, netPosition = 0;
         uint32_t openOrders = 0; bool known = false, killed = false;
         int64_t rateBucketIdx = -1; uint32_t rateSum = 0; std::array<uint16_t, RATE_BUCKETS> rateBuckets{};
         std::array<DupEntry, DUP_RING> dups{}; uint8_t dupHead = 0;
@@ -337,7 +343,9 @@ private:
         i128 net = i128(a.netPosition) + a.openBuyNotional - a.openSellNotional + (buy ? notional : -notional);
         if (lim.maxGrossExposure && gross > lim.maxGrossExposure) return reject(Reason::GrossExposure);
         if (lim.maxNetExposure && (net > lim.maxNetExposure || -net > lim.maxNetExposure)) return reject(Reason::NetExposure);
-        if (gross > INT64_MAX / 2 || net > INT64_MAX / 2 || -net > INT64_MAX / 2) return reject(Reason::GrossExposure);   // hard ceiling of the money type
+        // The only hard ceiling left is what an ExposureSnapshot can carry: 1e-4 units in int64,
+        // about $922 trillion. Beyond that we could hold the number but could not report it.
+        if (!money::reportable(gross) || !money::reportable(net)) return reject(Reason::GrossExposure);
         ck |= Check::BuyingPower;
         int64_t req = requirement(s, notional);
         int64_t bpAfter = a.bpBase - a.bpCommitted - req;

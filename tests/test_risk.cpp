@@ -50,6 +50,11 @@ struct Harness {
         put(&d.header);
         return Reason(d.body.reason);
     }
+    // Firm-wide limits expressed at 1e-4 units, which is how a limit above $92bn crosses the wire.
+    void limitsWide(uint32_t acct, int64_t maxQty, int64_t maxNotional, int64_t gross1e4, int64_t net1e4) {
+        Frame<LimitUpdate> f; f.init(); f.body.accountIdx = acct; f.body.maxOrderQty = maxQty; f.body.maxOrderNotional = maxNotional;
+        f.body.maxGrossExposure = gross1e4; f.body.maxNetExposure = net1e4; f.body.moneyScale = MoneyScale::Unit1e4; send(f);
+    }
     void buyingPower(uint32_t acct, int64_t bp) { Frame<BuyingPowerUpdate> f; f.init(); f.body.accountIdx = acct; f.body.buyingPower = bp; send(f, 11); }
     void cancel(uint64_t orderId) { Frame<OrderState> f; f.init(); f.body.orderId = orderId; f.body.status = OrdStatus::Cancelled; send(f, 4); }
     void fill(uint64_t orderId, int64_t qty, int64_t px, bool last) {
@@ -191,6 +196,29 @@ int main(int argc, char** argv) {
 
     std::printf("all %d reject reasons exercised; accepts=%llu rejects=%llu\n", 29, (unsigned long long)eng->accepts(), (unsigned long long)eng->rejects());
     drain();
+
+    // ---- firm-scale exposure: the aggregate ceiling used to be $92bn, which is the whole point of CR-1.
+    // Fifteen orders of about $10bn each, on a limit that can only be expressed at 1e-4 units.
+    {
+        const uint32_t FIRM = 1;
+        h.buyingPower(FIRM, 90'000'000'000LL * USD / 1000 * 1000);            // just under the per-account cap
+        h.limitsWide(FIRM, 100'000'000, 20'000'000'000LL * USD, 500'000'000'000LL * 10'000, 500'000'000'000LL * 10'000);
+        int64_t big = 10'000'000'000LL * USD / ap;                             // ~$10bn of AAPL, in shares
+        big -= big % 100;
+        int accepted2 = 0;
+        for (int i = 0; i < 15; ++i) if (h.order(h.mk(FIRM, AAPL, Side::Buy, big, ap)) == Reason::NoReason) ++accepted2;
+        money::i128 gross = eng->grossExposure(FIRM);
+        std::printf("firm scale: %d of 15 accepted, gross exposure $%.1f bn (the old int64 ceiling was $92.2 bn)\n",
+                    accepted2, double(gross) / 1e8 / 1e9);
+        CHECK(accepted2 == 15);
+        CHECK(gross > money::MAX_NANO);                                        // would have overflowed or been rejected before
+        CHECK(money::reportable(gross));
+        // and an ExposureSnapshot can carry it: the unit says so
+        MoneyScale sc = MoneyScale::Unset; int64_t wire = money::toWire(gross, sc);
+        CHECK(sc == MoneyScale::Unit1e4 && money::toNano(wire, sc) / 10000 == gross / 10000);
+        // beyond what a snapshot could report, the engine refuses rather than wrapping
+        CHECK(!money::reportable(money::MAX_REPORTABLE + 1));
+    }
 
     // ---- random flow on a fresh account, then cold replay must reproduce every verdict
     h.buyingPower(500, 50'000'000 * USD); h.limits(500, 0, 10000, 5'000'000 * USD, 200'000'000 * USD, 100'000'000 * USD, 300, 0, 500);

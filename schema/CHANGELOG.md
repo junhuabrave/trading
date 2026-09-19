@@ -3,6 +3,30 @@
 Every version bump is recorded here with the reason. `tools/schema_check.py OLD NEW`
 must pass before a bump merges.
 
+## v5 (2026-09-19)
+Frozen v4 copy under `schema/versions/trading-v4.xml`. Money on the wire is int64; at 1e-8 units
+that tops out at $92.2bn, which is fine for one order and far too small for a firm's gross exposure
+(CR-1). Rather than silently redefine what the existing fields mean, a message that carries an
+aggregate now says which unit it used.
+* `MoneyScale` enum. Unset means 1e-8, which is what every message written before v5 meant, so old
+  logs keep their meaning exactly.
+* `moneyScale` (sinceVersion 5) added to `LimitUpdate`, `BuyingPowerUpdate`, `RiskDecision` and
+  `ExposureSnapshot`, each taken from a byte of that message's existing padding. No block length
+  changed. Per-order fields stay at 1e-8: a single order above $92bn is not a thing we need.
+
+## v5 (2026-09-19)
+Frozen v4 copy under `schema/versions/trading-v4.xml`. Money on the wire is int64; at 1e-8 units
+that tops out at $92.2bn, which is fine for one order and far too small for a firm's gross exposure
+(CR-1). Rather than silently redefine what the existing fields mean, the two messages that carry a
+firm-wide aggregate now say which unit they used.
+* `MoneyScale` enum. Unset means 1e-8, which is what every message written before v5 meant, so old
+  logs keep their meaning exactly.
+* `moneyScale` appended to `LimitUpdate` and `ExposureSnapshot`, each out of that message's trailing
+  padding, after every existing field. No block length changed.
+* Per-order notional and per-account buying power stay at 1e-8 deliberately: one order or one
+  client's buying power above $92bn is not a case we have, and narrowing the change narrows the
+  places a unit can be misread.
+
 ## v4 (2026-09-19)
 Frozen v3 copy under `schema/versions/trading-v3.xml`. Market-data identity moves from the sequence
 we assign to the one the venue assigned, so that redundant feed handlers produce identical streams
