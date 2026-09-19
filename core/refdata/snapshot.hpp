@@ -17,7 +17,7 @@ namespace trading::refdata {
 
 enum class Section : uint16_t {
     Instruments = 1, Listings = 2, Venues = 3, TickTables = 4, Calendars = 5,
-    CorporateActions = 6, Lists = 7, Fees = 8, Accounts = 9, Components = 10, TickerIndex = 11,
+    CorporateActions = 6, Lists = 7, Fees = 8, Accounts = 9, Components = 10, TickerIndex = 11, Feeds = 12,
 };
 
 __extension__ typedef unsigned __int128 u128;   // bounds arithmetic that cannot wrap
@@ -75,6 +75,7 @@ public:
     std::span<const FeeRecord> fees() const { return records<FeeRecord>(Section::Fees); }
     std::span<const AccountRecord> accounts() const { return records<AccountRecord>(Section::Accounts); }
     std::span<const TickerIndexEntry> tickerIndex() const { return records<TickerIndexEntry>(Section::TickerIndex); }
+    std::span<const FeedRecord> feeds() const { return records<FeedRecord>(Section::Feeds); }
 
     // Bitset for a list (1-based ListId). Returns LIST_BYTES bytes.
     std::span<const uint8_t> list(ListId id) const {

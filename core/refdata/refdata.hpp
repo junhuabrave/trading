@@ -22,6 +22,8 @@ struct TickTable {
     }
 };
 
+inline constexpr size_t MAX_FEEDS = 256;
+
 class RefData {
 public:
     RefData()
@@ -29,7 +31,7 @@ public:
           lotSize_(MAX_SYMBOLS, 0), flags_(MAX_SYMBOLS, 0), marginClass_(MAX_SYMBOLS, 0),
           refPrice_(MAX_SYMBOLS, 0), adv30_(MAX_SYMBOLS, 0), sharesOut_(MAX_SYMBOLS, 0),
           listingVenue_(MAX_SYMBOLS, 0), ssrActive_(MAX_SYMBOLS, 0), ssrUntil_(MAX_SYMBOLS, 0),
-          lists_(5 * LIST_BYTES, 0), tickTables_(256) {}
+          lists_(5 * LIST_BYTES, 0), tickTables_(256), feeds_(MAX_FEEDS) {}
 
     // Start of day: copy the hot fields out of the mapped snapshot.
     void load(const Snapshot& snap) {
@@ -52,6 +54,15 @@ public:
             if (tt.tickTableId >= tickTables_.size()) continue;
             tickTables_[tt.tickTableId].bandCount = tt.bandCount;
             tickTables_[tt.tickTableId].bands = tt.bands;
+        }
+        // The feed registry: immutable for the session, so it is not folded into stateHash(). Nothing
+        // mutates it intraday, and SessionStart already refuses a consumer whose snapshot hash differs.
+        for (auto& f : feeds_) f = FeedRecord{};
+        maxFeedId_ = 0;
+        for (const FeedRecord& f : snap.feeds()) {
+            if (f.feedId == 0 || f.feedId >= MAX_FEEDS) continue;
+            feeds_[f.feedId] = f;
+            maxFeedId_ = std::max(maxFeedId_, f.feedId);
         }
         std::memcpy(snapshotHash_.data(), snap.contentHash().data(), 32);
         businessDate_ = snap.businessDate();
@@ -135,6 +146,12 @@ public:
         uint32_t lid = uint32_t(id);
         return lid >= 1 && lid <= 5 && i < MAX_SYMBOLS && (lists_[(lid - 1) * LIST_BYTES + (i >> 3)] & (1u << (i & 7)));
     }
+    // Feed registry. feedId is the identity half of a market-data message's (feedId, venueSeq) pair
+    // and the header's streamId carries it on every market-data frame.
+    bool knownFeed(uint32_t feedId) const noexcept { return feedId != 0 && feedId < MAX_FEEDS && feeds_[feedId].feedId == feedId; }
+    const FeedRecord& feed(uint32_t feedId) const noexcept { return feeds_[feedId < MAX_FEEDS ? feedId : 0]; }
+    bool feedProvides(uint32_t feedId, FeedProvides::type bit) const noexcept { return knownFeed(feedId) && (feeds_[feedId].provides & bit) != 0; }
+    uint32_t maxFeedId() const noexcept { return maxFeedId_; }
     uint32_t maxSymbolIdx() const noexcept { return maxIdx_; }
     uint32_t businessDate() const noexcept { return businessDate_; }
     const std::array<uint8_t, 32>& snapshotHash() const noexcept { return snapshotHash_; }
@@ -163,6 +180,8 @@ private:
     std::vector<int64_t>  ssrUntil_;
     std::vector<uint8_t>  lists_;
     std::vector<TickTable> tickTables_;
+    std::vector<FeedRecord> feeds_;
+    uint32_t maxFeedId_ = 0;
     std::array<uint8_t, 32> snapshotHash_{};
     uint32_t maxIdx_ = 0;
     uint32_t businessDate_ = 0;

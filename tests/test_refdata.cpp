@@ -31,6 +31,17 @@ int main(int argc, char** argv) {
     Snapshot s1(argv[1]);
     RefData rd; rd.load(s1);
     std::printf("day1: date=%u v%u symbols<=%u\n", s1.businessDate(), s1.version(), rd.maxSymbolIdx());
+
+    // feed registry (MD-1): declared feeds are the identity half of every market-data watermark
+    CHECK(rd.maxFeedId() == 7);
+    CHECK(rd.knownFeed(1) && rd.knownFeed(7) && !rd.knownFeed(0) && !rd.knownFeed(8) && !rd.knownFeed(99));
+    CHECK(rd.feed(1).venueId == 2 && rd.feed(1).kind == uint8_t(FeedKind::Direct) && rd.feed(1).lineCount == 4);
+    CHECK(rd.feedProvides(1, FeedProvides::depth) && rd.feedProvides(1, FeedProvides::imbalance));
+    CHECK(rd.feedProvides(5, FeedProvides::topOfBook) && !rd.feedProvides(5, FeedProvides::depth));   // the SIP has no depth
+    CHECK(rd.feed(5).kind == uint8_t(FeedKind::Sip) && rd.feed(7).kind == uint8_t(FeedKind::Vendor));
+    { size_t declared = 0; for (const FeedRecord& f : s1.feeds()) { CHECK(f.feedId != 0); ++declared; }
+      CHECK(declared == 7); }
+    std::printf("feeds: %u declared, max id %u\n", 7u, rd.maxFeedId());
     uint32_t aapl = s1.lookupTicker("AAPL"), gme = s1.lookupTicker("GME"), xyzq = s1.lookupTicker("XYZQ"), nvda = s1.lookupTicker("NVDA");
     CHECK(aapl == 1 && gme == 7 && xyzq == 9 && nvda == 10);
     CHECK(s1.lookupTicker("NEWCO") == 0);

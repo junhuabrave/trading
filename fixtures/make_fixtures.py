@@ -13,6 +13,24 @@ VENUES = [
     {"venueId": 4, "mic": "IEXG", "name": "IEX", "venueType": "Exchange", "protocol": 9, "sessionIds": [401], "oneWayLatencyNs": 25000},
     {"venueId": 9, "mic": "INTL", "name": "Internal", "venueType": "Internal", "protocol": 0, "sessionIds": [], "oneWayLatencyNs": 0},
 ]
+# One record per logical feed. Two publishers of the same feed share a feedId; that shared identity
+# is what makes redundant handlers produce the same (feedId, venueSeq) for the same market event.
+FEEDS = [
+    {"feedId": 1, "venueId": 2, "protocol": 1,  "kind": "Direct", "site": 1, "lineCount": 4, "name": "XNAS ITCH",
+     "provides": ["depth", "topOfBook", "trades", "status", "imbalance"]},
+    {"feedId": 2, "venueId": 1, "protocol": 2,  "kind": "Direct", "site": 1, "lineCount": 2, "name": "XNYS Pillar",
+     "provides": ["depth", "topOfBook", "trades", "status"]},
+    {"feedId": 3, "venueId": 3, "protocol": 3,  "kind": "Direct", "site": 1, "lineCount": 2, "name": "BATS PITCH",
+     "provides": ["depth", "topOfBook", "trades", "status"]},
+    {"feedId": 4, "venueId": 4, "protocol": 9,  "kind": "Direct", "site": 1, "lineCount": 1, "name": "IEX DEEP",
+     "provides": ["depth", "topOfBook", "trades"]},
+    {"feedId": 5, "venueId": 0, "protocol": 10, "kind": "Sip",    "site": 2, "lineCount": 2, "name": "UTP SIP",
+     "provides": ["topOfBook", "trades", "status"]},
+    {"feedId": 6, "venueId": 0, "protocol": 11, "kind": "Sip",    "site": 2, "lineCount": 2, "name": "CTA SIP",
+     "provides": ["topOfBook", "trades", "status"]},
+    {"feedId": 7, "venueId": 0, "protocol": 20, "kind": "Vendor", "site": 3, "lineCount": 1, "name": "vendor consolidated",
+     "provides": ["topOfBook", "trades"]},
+]
 TICKS = [
     {"tickTableId": 1, "bands": [[0, 10000], [100000000, 1000000]]},          # sub-$1: $0.0001, else $0.01
     {"tickTableId": 2, "bands": [[0, 10000], [100000000, 500000]]},           # half-penny pilot
@@ -76,7 +94,7 @@ def fixture(day):
         fees[1]["feePerShare"] = -250000; fees[1]["effectiveDate"] = 20260916   # NYSE rebate change
     return {
         "instruments": inst, "listings": listings, "venues": VENUES, "tickTables": TICKS, "calendars": cals,
-        "corporateActions": ca, "lists": lists, "fees": fees,
+        "corporateActions": ca, "lists": lists, "fees": fees, "feeds": FEEDS,
         "accounts": [{"accountIdx": 1, "accountType": "Firm", "routingProfile": 1, "externalRef": "FIRM-MM"},
                      {"accountIdx": 42, "accountType": "Margin", "routingProfile": 3, "limitSetId": 7, "externalRef": "CL-000042"}],
         "components": [{"sourceId": 1, "role": "Sequencer", "name": "seq-a"}, {"sourceId": 2, "role": "Gateway", "name": "gw-fix-1"},

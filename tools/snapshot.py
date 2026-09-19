@@ -24,9 +24,10 @@ MAX_SYMBOLS = 65536
 LIST_BYTES = MAX_SYMBOLS // 8
 
 SEC_INSTRUMENTS, SEC_LISTINGS, SEC_VENUES, SEC_TICKTABLES, SEC_CALENDARS, \
-SEC_CORPACTIONS, SEC_LISTS, SEC_FEES, SEC_ACCOUNTS, SEC_COMPONENTS, SEC_TICKERINDEX = range(1, 12)
+SEC_CORPACTIONS, SEC_LISTS, SEC_FEES, SEC_ACCOUNTS, SEC_COMPONENTS, SEC_TICKERINDEX, SEC_FEEDS = range(1, 13)
 SECTION_NAMES = {1: "instruments", 2: "listings", 3: "venues", 4: "tickTables", 5: "calendars",
-                 6: "corporateActions", 7: "lists", 8: "fees", 9: "accounts", 10: "components", 11: "tickerIndex"}
+                 6: "corporateActions", 7: "lists", 8: "fees", 9: "accounts", 10: "components", 11: "tickerIndex",
+                 12: "feeds"}
 LIST_IDS = {"etb": 1, "htb": 2, "restricted": 3, "threshold": 4, "watch": 5}
 
 def pad_page(b: bytes) -> bytes:
@@ -126,6 +127,13 @@ def build(fixture: dict, business_date: int, version: int) -> bytes:
                         for c in sorted(fixture.get("components", []), key=lambda c: c["sourceId"]))
     sec_tix = b"".join(t.TickerIndexEntry(ticker=i["ticker"], symbolIdx=i["symbolIdx"]).pack()
                        for i in sorted(instruments, key=lambda i: i["ticker"]))
+    # feeds: one record per logical market-data feed. Redundant publishers of the same feed share a
+    # feedId on purpose; that is what lets a consumer dedupe them by (feedId, venueSeq) identity.
+    feeds = sorted(fixture.get("feeds", []), key=lambda f: f["feedId"])
+    sec_feed = b"".join(t.FeedRecord(feedId=f["feedId"], venueId=f.get("venueId", 0), protocol=f.get("protocol", 0),
+                                     kind=enum_val(t.FeedKind, f.get("kind", "Direct")), site=f.get("site", 0),
+                                     lineCount=f.get("lineCount", 1), provides=flags_val(t.FeedProvides, f.get("provides", [])),
+                                     name=f.get("name", "")).pack() for f in feeds)
 
     sections = [
         (SEC_INSTRUMENTS, t.SymbolRecord.SIZE, n_slots, sec_instr),
@@ -139,6 +147,7 @@ def build(fixture: dict, business_date: int, version: int) -> bytes:
         (SEC_ACCOUNTS, t.AccountRecord.SIZE, n_acct, sec_acct),
         (SEC_COMPONENTS, t.ComponentRecord.SIZE, len(sec_comp) // t.ComponentRecord.SIZE, sec_comp),
         (SEC_TICKERINDEX, t.TickerIndexEntry.SIZE, len(instruments), sec_tix),
+        (SEC_FEEDS, t.FeedRecord.SIZE, len(feeds), sec_feed),
     ]
     body = b""
     entries = []
@@ -191,6 +200,13 @@ class Snapshot:
             content.update(data)
         if list(content.digest()) != h.contentHash: errs.append("content hash mismatch")
         # semantic checks
+        seen_feed = set()
+        for f in self.records(SEC_FEEDS, t.FeedRecord):
+            if f.feedId == 0: errs.append("feed with id 0")
+            if f.feedId in seen_feed: errs.append(f"duplicate feedId {f.feedId}")
+            seen_feed.add(f.feedId)
+            if f.provides == 0: errs.append(f"feed {f.feedId} provides nothing")
+            if f.lineCount == 0: errs.append(f"feed {f.feedId} has no lines")
         inst = self.instruments()
         seen = {}
         for r in inst:
@@ -287,6 +303,9 @@ def main():
         print(f"{a.snap}: date={s.hdr.businessDate} v{s.hdr.snapshotVersion} schema=v{s.hdr.schemaVersion} size={s.hdr.fileSize} hash={s.content_hash_hex()}")
         for stype, e in sorted(s.sections.items()):
             print(f"  section {stype:2d} {SECTION_NAMES[stype]:17s} off={e.offset:8d} rec={e.recordSize:5d} x {e.recordCount}")
+        for f in s.records(SEC_FEEDS, t.FeedRecord):
+            print(f"  feed {f.feedId:3d} {f.name:18s} venue={f.venueId} {t.FeedKind(f.kind).name:6s} "
+                  f"lines={f.lineCount} provides={t.FeedProvides(f.provides)!s}")
         for r in [r for r in s.instruments() if r.status][:a.symbols]:
             print(f"  [{r.symbolIdx:5d}] {r.ticker:8s} {t.SymbolStatusCode(r.status).name:8s} tick={r.tickTableId} lot={r.lotSize} ref={r.refPrice/1e8:.2f} flags={t.SymbolFlags(r.flags)!s}")
     elif a.cmd == "diff":

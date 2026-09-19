@@ -748,6 +748,109 @@
    "effectiveDate": 20260901
   }
  ],
+ "feeds": [
+  {
+   "feedId": 1,
+   "venueId": 2,
+   "protocol": 1,
+   "kind": "Direct",
+   "site": 1,
+   "lineCount": 4,
+   "name": "XNAS ITCH",
+   "provides": [
+    "depth",
+    "topOfBook",
+    "trades",
+    "status",
+    "imbalance"
+   ]
+  },
+  {
+   "feedId": 2,
+   "venueId": 1,
+   "protocol": 2,
+   "kind": "Direct",
+   "site": 1,
+   "lineCount": 2,
+   "name": "XNYS Pillar",
+   "provides": [
+    "depth",
+    "topOfBook",
+    "trades",
+    "status"
+   ]
+  },
+  {
+   "feedId": 3,
+   "venueId": 3,
+   "protocol": 3,
+   "kind": "Direct",
+   "site": 1,
+   "lineCount": 2,
+   "name": "BATS PITCH",
+   "provides": [
+    "depth",
+    "topOfBook",
+    "trades",
+    "status"
+   ]
+  },
+  {
+   "feedId": 4,
+   "venueId": 4,
+   "protocol": 9,
+   "kind": "Direct",
+   "site": 1,
+   "lineCount": 1,
+   "name": "IEX DEEP",
+   "provides": [
+    "depth",
+    "topOfBook",
+    "trades"
+   ]
+  },
+  {
+   "feedId": 5,
+   "venueId": 0,
+   "protocol": 10,
+   "kind": "Sip",
+   "site": 2,
+   "lineCount": 2,
+   "name": "UTP SIP",
+   "provides": [
+    "topOfBook",
+    "trades",
+    "status"
+   ]
+  },
+  {
+   "feedId": 6,
+   "venueId": 0,
+   "protocol": 11,
+   "kind": "Sip",
+   "site": 2,
+   "lineCount": 2,
+   "name": "CTA SIP",
+   "provides": [
+    "topOfBook",
+    "trades",
+    "status"
+   ]
+  },
+  {
+   "feedId": 7,
+   "venueId": 0,
+   "protocol": 20,
+   "kind": "Vendor",
+   "site": 3,
+   "lineCount": 1,
+   "name": "vendor consolidated",
+   "provides": [
+    "topOfBook",
+    "trades"
+   ]
+  }
+ ],
  "accounts": [
   {
    "accountIdx": 1,
