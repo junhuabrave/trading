@@ -3,6 +3,17 @@
 Every version bump is recorded here with the reason. `tools/schema_check.py OLD NEW`
 must pass before a bump merges.
 
+## v4 (2026-09-19)
+Frozen v3 copy under `schema/versions/trading-v3.xml`. Market-data identity moves from the sequence
+we assign to the one the venue assigned, so that redundant feed handlers produce identical streams
+and a consumer can fail over between publishers with no gap and no duplicate (MD-11).
+* `venueSeq` (uint64, sinceVersion 4) appended to `Nbbo`, `Imbalance` and `SymbolStatus` out of each
+  message's trailing `Pad8`. `BookDelta`, `Trade` and `BookSnapshot` already carried one. No block
+  length changed; a v3 reader sees zero, which the engines treat as "no identity".
+* `MdWatermark` is re-documented rather than renamed: `streamIds` carries the feedId and `seqs` the
+  venue's sequence. The field names are frozen by the compatibility checker and a rename would buy
+  nothing.
+
 ## v3 (2026-09-18)
 Frozen v2 copy under `schema/versions/trading-v2.xml`. All additions append-only; no block length changed.
 * `CheckpointAck` (13): an engine's state hash after a `Checkpoint`, so divergence is visible in production.

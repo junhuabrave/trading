@@ -1,10 +1,15 @@
 // core/seq/watermark.hpp : records the market-data position an engine has consumed
 // and turns it into MdWatermark frames to sequence alongside a decision.
 //
-// One MdWatermark carries eight (stream, seq) pairs. An engine that consumes more feeds
-// than that sequences several watermarks in the same batch, all before the decision;
-// banks() says how many, fill(m, bank) fills each. load() merges, so a replayer can
-// feed every watermark of a batch into one tracker.
+// The position is a (feedId, venueSeq) pair: the feed a message came from and the sequence that
+// feed's venue assigned, never a sequence of ours. That is what lets a replayer reconstruct the
+// exact book an engine saw no matter which publisher of that feed served it, and what lets a live
+// consumer fail over between publishers without a gap or a duplicate.
+//
+// One MdWatermark carries eight pairs. An engine that consumes more feeds than that sequences
+// several watermarks in the same batch, all before the decision; banks() says how many,
+// fill(m, bank) fills each. load() merges, so a replayer can feed every watermark of a batch
+// into one tracker.
 #pragma once
 #include "trading.hpp"
 #include <array>
@@ -13,14 +18,17 @@ namespace trading::seq {
 
 class WatermarkTracker {
 public:
-    static constexpr size_t MAX_STREAMS = 16;
+    static constexpr size_t MAX_STREAMS = 16;     // feeds tracked; eight per MdWatermark message
     static constexpr size_t PER_MESSAGE = 8;
-    void observe(uint32_t streamId, uint64_t seq) noexcept {
-        for (size_t i = 0; i < n_; ++i) if (ids_[i] == streamId) { seqs_[i] = seq; return; }
-        if (n_ < MAX_STREAMS) { ids_[n_] = streamId; seqs_[n_] = seq; ++n_; }
+    // A venueSeq of 0 means the frame carries no identity (a pre-v4 frame, or a message the feed
+    // layer does not sequence); it is delivered but cannot be watermarked, so it is not recorded.
+    void observe(uint32_t feedId, uint64_t venueSeq) noexcept {
+        if (venueSeq == 0) return;
+        for (size_t i = 0; i < n_; ++i) if (ids_[i] == feedId) { if (venueSeq > seqs_[i]) seqs_[i] = venueSeq; return; }
+        if (n_ < MAX_STREAMS) { ids_[n_] = feedId; seqs_[n_] = venueSeq; ++n_; }
     }
-    uint64_t seqFor(uint32_t streamId) const noexcept {
-        for (size_t i = 0; i < n_; ++i) if (ids_[i] == streamId) return seqs_[i];
+    uint64_t seqFor(uint32_t feedId) const noexcept {
+        for (size_t i = 0; i < n_; ++i) if (ids_[i] == feedId) return seqs_[i];
         return 0;
     }
     size_t banks() const noexcept { return n_ == 0 ? 1 : (n_ + PER_MESSAGE - 1) / PER_MESSAGE; }

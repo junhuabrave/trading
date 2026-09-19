@@ -60,6 +60,8 @@ int main(int argc, char** argv) {
     // drop copy must agree with the OMS-side fill count: what the venue says it did equals what we booked
     if (s.dropCopyFills != s.fills) { std::printf("FAIL: drop copy has %llu fills, OMS booked %llu\n", (unsigned long long)s.dropCopyFills, (unsigned long long)s.fills); rc = 1; }
     if (s.orders == 0 || s.accepted == 0 || s.fills == 0) { std::printf("FAIL: scenario produced no flow\n"); rc = 1; }
+    // every market-data frame must carry a (feedId, venueSeq) identity, or nothing can replay to it
+    if (s.unidentifiedMd) { std::printf("FAIL: %llu market-data frames had no venueSeq\n", (unsigned long long)s.unidentifiedMd); rc = 1; }
     if (c.drill == "session-drop" && (s.placed[0] == 0 || s.cancelled == 0)) { std::printf("FAIL: session-drop drill did not cancel or re-place\n"); rc = 1; }
     if (c.drill == "kill" && s.rejected == 0) { std::printf("FAIL: kill drill rejected nothing\n"); rc = 1; }
     if (c.drill == "rate-burst" && s.rejected == 0) { std::printf("FAIL: rate burst rejected nothing\n"); rc = 1; }

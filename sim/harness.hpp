@@ -9,6 +9,7 @@
 #include "watermark.hpp"
 #include "risk.hpp"
 #include "oms.hpp"
+#include "identity.hpp"
 #include "venue_sim.hpp"
 #include "stub_router.hpp"
 #include "feed_sim.hpp"
@@ -27,6 +28,11 @@ using namespace trading::seq;
 using namespace trading::refdata;
 using namespace trading::risk;
 
+// The simulator drives one feed today: Nasdaq ITCH, feedId 1 in the fixture registry. A
+// market-data stream is one feed, so the stream id and the feed id are the same number by
+// construction rather than by coincidence.
+inline constexpr uint32_t FEED_XNAS_ITCH = 1;
+
 struct Config {
     std::string snapshot, workdir, eventsFile, drill;
     uint64_t seed = 7; uint32_t steps = 5000; uint32_t checkpointEvery = 2000; uint32_t sessions = 3; uint32_t throttlePerSec = 2000;
@@ -38,7 +44,7 @@ struct Stats {
     uint64_t orders = 0, accepted = 0, rejected = 0, fills = 0, cancelled = 0, venueRejects = 0, children = 0, checkpoints = 0, coreSeq = 0, mdSeq = 0, dropCopyFills = 0, delayed = 0;
     std::array<uint64_t, 16> placed{};
     std::array<uint8_t, 32> finalHash{};
-    uint64_t maxRingLag = 0;
+    uint64_t maxRingLag = 0, unidentifiedMd = 0;
 };
 
 inline std::string hex(const std::array<uint8_t, 32>& h, size_t n = 32) { std::string s; char b[3]; for (size_t i = 0; i < n; ++i) { std::snprintf(b, 3, "%02x", h[i]); s += b; } return s; }
@@ -61,7 +67,10 @@ public:
         if (auto* d = as<BookDelta>(f)) book_.apply(*d);
         else if (auto* n = as<Nbbo>(f)) oms_.onNbbo(*n);   // the NBBO on every client report
         risk_.apply(f);                                     // Trade and Nbbo feed reference prices and the SSR bid
-        wm_.observe(f->streamId, f->seq); mdPos_ = f->seq;
+        md::Identity id = md::identity(f);
+        if (id.venueSeq == 0) ++unidentified_;              // a market-data frame nothing can replay to
+        wm_.observe(id.feedId, id.venueSeq);                // (feedId, venueSeq), never a sequence of ours
+        mdCursor_ = f->seq;                                 // how far we have read in the journal; an implementation detail
     }
     void onCore(const FrameHeader* f) {
         if (auto* ss = as<SessionStart>(f)) { if (std::memcmp(ss->snapshotHash.data(), snapHash_.data(), 32) != 0) throw std::runtime_error("engine: snapshot hash mismatch at SessionStart"); return; }
@@ -113,6 +122,7 @@ public:
     const RiskEngine& risk() const { return risk_; } const oms::Oms& oms() const { return oms_; } const StubRouter& router() const { return router_; }
     uint64_t checkpoints() const { return checkpoints_; }
     uint64_t verified() const { return verified_; } uint64_t mismatches() const { return mismatches_; }
+    uint64_t unidentified() const { return unidentified_; }
     const std::string& firstMismatch() const { return firstMismatch_; }
 
 private:
@@ -160,10 +170,20 @@ private:
     }
     // ----- verify mode
     void pullMd(const MdWatermark& w) {
-        if (!mdJournal_) return;
-        uint64_t target = 0;
-        for (int i = 0; i < w.count; ++i) if (w.streamIds[i] == mdJournal_->streamId()) target = w.seqs[i];
-        if (target > mdPos_) { mdJournal_->replay(mdPos_ + 1, target, [&](const FrameHeader* m) { onMd(m); }); mdPos_ = target; }
+        for (int i = 0; i < w.count; ++i) pullToVenueSeq(w.streamIds[i], w.seqs[i]);
+    }
+    // Feed the journal forward until this feed has reached the venue sequence the live engine had
+    // consumed. One feed today, so stopping at the first frame past the target is exact. With
+    // several feeds interleaved in one journal it would be conservative; MD-6 removes the question
+    // by giving each feed its own journal keyed by its own venueSeq, where this becomes a seek.
+    void pullToVenueSeq(uint32_t feedId, uint64_t targetVenueSeq) {
+        if (!mdJournal_ || targetVenueSeq == 0) return;
+        if (wm_.seqFor(feedId) >= targetVenueSeq) return;
+        uint64_t last = mdJournal_->replayWhile(mdCursor_ + 1, [&](const FrameHeader* m) {
+            if (md::identity(m).venueSeq > targetVenueSeq) return false;
+            onMd(m); return true;
+        });
+        if (last) mdCursor_ = last;
     }
     void note(const std::string& what) { ++mismatches_; if (firstMismatch_.empty()) firstMismatch_ = what; }
     // Decisions are evaluated when the order is read (as live did) and matched to the sequenced
@@ -204,7 +224,7 @@ private:
     void pullTo(uint64_t causeSeq) {
         if (!wmIndex_ || !mdJournal_) return;
         auto it = std::lower_bound(wmIndex_->begin(), wmIndex_->end(), std::make_pair(causeSeq, uint64_t(0)));
-        if (it != wmIndex_->end() && it->first == causeSeq && it->second > mdPos_) { mdJournal_->replay(mdPos_ + 1, it->second, [&](const FrameHeader* m) { onMd(m); }); mdPos_ = it->second; }
+        if (it != wmIndex_->end() && it->first == causeSeq) pullToVenueSeq(FEED_XNAS_ITCH, it->second);
     }
     void verifyRoute(const FrameHeader* f, const RouteDecision& rt) {
         ++verified_;
@@ -231,14 +251,14 @@ private:
     Mode mode_; uint16_t src_;
     RefData rd_; RiskEngine risk_; oms::Oms oms_; StubRouter router_; BookLite book_; WatermarkTracker wm_;
     std::deque<std::vector<std::byte>> omsExpected_;
-    const Journal* mdJournal_; uint64_t mdPos_ = 0; const std::vector<std::pair<uint64_t, uint64_t>>* wmIndex_ = nullptr;
+    const Journal* mdJournal_; uint64_t mdCursor_ = 0; const std::vector<std::pair<uint64_t, uint64_t>>* wmIndex_ = nullptr;
     std::array<uint8_t, 32> snapHash_{};
     NewOrder lastOrder_{}; ReplaceOrder lastReplace_{}; FrameHeader lastHdr_{}; bool lastIsReplace_ = false;
     struct Expected { RiskDecision d; bool replace; };
     std::map<uint64_t, Expected> expected_; std::map<uint64_t, StubRouter::Plan> plans_;   // keyed by cause seq (verify only)
     std::deque<Batch> pending_;
     std::vector<std::pair<uint64_t, std::array<uint8_t, 32>>> expectedAcks_;
-    uint64_t childCounter_ = 0, checkpoints_ = 0, verified_ = 0, mismatches_ = 0; std::string firstMismatch_;
+    uint64_t childCounter_ = 0, checkpoints_ = 0, verified_ = 0, mismatches_ = 0, unidentified_ = 0; std::string firstMismatch_;
 };
 
 class Harness {
@@ -255,8 +275,8 @@ public:
         FakeClock fake; SteadyClock steady; Clock& clock = cfg_.benchMode ? static_cast<Clock&>(steady) : static_cast<Clock&>(fake);
         std::mt19937_64 rng(cfg_.seed);
         BroadcastRing coreRing(1 << 14), mdRing(1 << 16);
-        Journal coreJ(coreDir, 0, 1, cfg_.segmentBytes), mdJ(mdDir, 1, 1, cfg_.segmentBytes);
-        Sequencer core(0, 1, coreJ, coreRing, clock, cfg_.checkpointEvery), md(1, 8, mdJ, mdRing, clock, 0);
+        Journal coreJ(coreDir, 0, 1, cfg_.segmentBytes), mdJ(mdDir, FEED_XNAS_ITCH, 1, cfg_.segmentBytes);
+        Sequencer core(0, 1, coreJ, coreRing, clock, cfg_.checkpointEvery), md(FEED_XNAS_ITCH, 8, mdJ, mdRing, clock, 0);
         uint64_t maxLag = 0;
         auto tick = [&]() -> int64_t { if (cfg_.benchMode) return steady.nowNs(); fake.t += 200'000 + int64_t(rng() % 1'800'000); return fake.t; };
 
@@ -315,7 +335,7 @@ public:
         s.fills = eng.oms().fills(); s.cancelled = eng.oms().cancelled(); s.venueRejects = eng.oms().venueRejected(); s.children = eng.router().children();
         s.checkpoints = eng.checkpoints(); s.coreSeq = core.lastSeq(); s.mdSeq = md.lastSeq(); s.delayed = venue.delayed();
         for (const auto& e : venue.dropCopy()) if (e.execType == ExecType::Fill || e.execType == ExecType::PartialFill) ++s.dropCopyFills;
-        s.placed = eng.router().placed(); s.finalHash = eng.hash(); s.maxRingLag = maxLag;
+        s.placed = eng.router().placed(); s.finalHash = eng.hash(); s.maxRingLag = maxLag; s.unidentifiedMd = eng.unidentified();
         liveStats_ = s; return s;
     }
 
@@ -348,12 +368,12 @@ public:
     struct VerifyResult { uint64_t verified = 0, mismatches = 0, frames = 0, checkpoints = 0; std::array<uint8_t, 32> finalHash{}; std::string first; };
     VerifyResult verify() {
         Snapshot snap(cfg_.snapshot);
-        Journal coreJ(cfg_.workdir + "/core.jnl", 0, 1, cfg_.segmentBytes), mdJ(cfg_.workdir + "/md.jnl", 1, 1, cfg_.segmentBytes);
+        Journal coreJ(cfg_.workdir + "/core.jnl", 0, 1, cfg_.segmentBytes), mdJ(cfg_.workdir + "/md.jnl", FEED_XNAS_ITCH, 1, cfg_.segmentBytes);
         Engine eng(snap, cfg_.sessions, Engine::Mode::Verify, &mdJ);
         std::vector<std::pair<uint64_t, uint64_t>> wmIndex;      // (cause seq, md target) for the engine's watermark batches
         coreJ.replay(1, 0, [&](const FrameHeader* f) {
             if (auto* w = as<MdWatermark>(f); w && f->sourceId == 3) {
-                uint64_t target = 0; for (int i = 0; i < w->count; ++i) if (w->streamIds[i] == 1) target = w->seqs[i];
+                uint64_t target = 0; for (int i = 0; i < w->count; ++i) if (w->streamIds[i] == FEED_XNAS_ITCH) target = w->seqs[i];
                 if (wmIndex.empty() || wmIndex.back().first != f->causeSeq) wmIndex.push_back({f->causeSeq, target});
             }
         });

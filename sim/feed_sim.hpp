@@ -1,7 +1,9 @@
 // sim/feed_sim.hpp : synthetic market data. A random-walk level book per symbol around the
 // reference price, emitting BookDelta (absolute quantities), Trade and Nbbo for one venue.
-// Deterministic for a seed. Line-level behaviour (A/B, gaps, retransmit) belongs to the
-// arbitrator drills in v0.3 once the feed layer exists.
+// Every message carries a venueSeq, monotonic within the feed: that, with the feedId the frame's
+// streamId carries, is what identifies it and what a watermark records. Deterministic for a seed.
+// Line-level behaviour (A/B, gaps, retransmit) belongs to the arbitrator drills once the feed
+// layer exists (MD-3).
 #pragma once
 #include "trading.hpp"
 #include "refdata.hpp"
@@ -12,8 +14,12 @@ namespace trading::sim {
 
 class FeedSim {
 public:
+    // venueSeqBase: a real feed's sequence does not restart because our handler attached. Starting
+    // well away from 1 keeps the venue's sequence visibly distinct from any we assign, so a consumer
+    // that confuses the two fails loudly instead of passing by coincidence.
+    static constexpr uint64_t VENUE_SEQ_BASE = 1'000'000;
     FeedSim(const refdata::RefData& rd, uint32_t symbols, uint16_t venueId, uint16_t sourceId, uint64_t seed)
-        : rd_(rd), n_(symbols), venue_(venueId), src_(sourceId), rng_(seed), mid_(symbols + 1) {
+        : rd_(rd), n_(symbols), venue_(venueId), src_(sourceId), rng_(seed), mid_(symbols + 1), venueSeq_(VENUE_SEQ_BASE) {
         for (uint32_t s = 1; s <= n_; ++s) mid_[s] = rd_.refPrice(s);
     }
     static constexpr int64_t TICK = 1'000'000;   // $0.01
@@ -47,6 +53,7 @@ public:
                 Frame<Nbbo> n; n.init(); n.header.sourceId = src_; n.header.originTs = now;
                 n.body.symbolIdx = s; n.body.bid = mid_[s] - TICK; n.body.ask = mid_[s] + TICK; n.body.bidQty = 500; n.body.askQty = 500;
                 n.body.bidVenue = venue_; n.body.askVenue = venue_; n.body.sipBid = n.body.bid; n.body.sipAsk = n.body.ask;
+                n.body.venueSeq = ++venueSeq_;
                 emit(&n.header); ++nbbos_;
             }
         }
@@ -55,7 +62,7 @@ public:
     uint64_t deltas() const { return deltas_; } uint64_t trades() const { return trades_; } uint64_t nbbos() const { return nbbos_; }
 private:
     const refdata::RefData& rd_; uint32_t n_; uint16_t venue_, src_;
-    std::mt19937_64 rng_; std::vector<int64_t> mid_; uint64_t venueSeq_ = 0, deltas_ = 0, trades_ = 0, nbbos_ = 0;
+    std::mt19937_64 rng_; std::vector<int64_t> mid_; uint64_t venueSeq_, deltas_ = 0, trades_ = 0, nbbos_ = 0;
 };
 
 } // namespace trading::sim

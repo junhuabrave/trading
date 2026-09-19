@@ -90,21 +90,31 @@ public:
     }
 
     // Replay frames with fromSeq <= seq <= toSeq (toSeq 0 = to end) into cb. Returns count.
-    // Reads through separate FILE handles so it never disturbs the writer's position.
     uint64_t replay(uint64_t fromSeq, uint64_t toSeq, const std::function<void(const FrameHeader*)>& cb) const {
+        uint64_t n = 0;
+        replayWhile(fromSeq, [&](const FrameHeader* f) {
+            if (toSeq && f->seq > toSeq) return false;
+            cb(f); ++n; return true;
+        });
+        return n;
+    }
+
+    // Replay from fromSeq while cb returns true; returns the seq of the last frame cb accepted, or
+    // 0 if none. This is what lets a consumer stop at a watermark it can only recognise from the
+    // frame itself (a venue sequence, say) without scanning to the end of the journal.
+    // Reads through separate FILE handles so it never disturbs the writer's position.
+    uint64_t replayWhile(uint64_t fromSeq, const std::function<bool(const FrameHeader*)>& cb) const {
         if (fromSeq < firstSeq()) fromSeq = firstSeq();
         if (fromSeq > lastSeq_) return 0;
         std::fflush(fp_);                                   // make the buffered tail visible to the read handles
-        // locate the segment and the nearest index entry at or before fromSeq
         size_t segIdx = 0;
         for (size_t i = 0; i < segs_.size(); ++i) if (segs_[i].firstSeq <= fromSeq) segIdx = i; else break;
         uint64_t off = sizeof(JournalHeader);
         for (const auto& e : index_) if (e.seq <= fromSeq && e.segment == segIdx) off = e.offset; else if (e.seq > fromSeq) break;
         alignas(16) std::byte buf[MAX_FRAME];
-        uint64_t n = 0;
+        uint64_t accepted = 0;
         for (; segIdx < segs_.size(); ++segIdx, off = sizeof(JournalHeader)) {
             const Segment& seg = segs_[segIdx];
-            if (seg.firstSeq > fromSeq && toSeq && seg.firstSeq > toSeq) break;
             std::FILE* rp = std::fopen(seg.path.c_str(), "rb");
             if (!rp) throw std::runtime_error("journal: cannot open for replay " + seg.path);
             std::fseek(rp, long(off), SEEK_SET);
@@ -115,15 +125,15 @@ public:
                 uint32_t len = h->frameLength;
                 if (len > sizeof(FrameHeader) && std::fread(buf + sizeof(FrameHeader), len - sizeof(FrameHeader), 1, rp) != 1) break;
                 if (h->seq >= fromSeq) {
-                    if (toSeq && h->seq > toSeq) { stop = true; break; }
-                    cb(h); ++n;
+                    if (!cb(h)) { stop = true; break; }
+                    accepted = h->seq;
                 }
                 off += len;
             }
             std::fclose(rp);
             if (stop) break;
         }
-        return n;
+        return accepted;
     }
 
 private:
