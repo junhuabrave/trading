@@ -8,7 +8,7 @@ B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
 .PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -45,6 +45,9 @@ build/run_sim: sim/run_sim.cpp sim/*.hpp core/md/*.hpp core/oms/*.hpp core/risk/
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/test_md: tests/test_md.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed_sim.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/test_arb: tests/test_arb.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed_sim.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -93,6 +96,8 @@ test: check all build/refdata-diff.log
 	python3 tools/reason_coverage.py build/risktest/risk.jnl build/omstest/oms.log
 	@echo "== market data: capture byte-exact, line redundancy, retransmit, dual publishers"
 	./build/test_md build/refdata-20260915-v1.bin build/mdtest
+	@echo "== line arbitrator: a forwarder is caught, then gap-free through loss, recovery and reordering"
+	./build/test_arb build/refdata-20260915-v1.bin build/arbtest
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json

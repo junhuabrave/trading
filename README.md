@@ -36,6 +36,7 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 | `core/md/packet.hpp` | The transport envelope a line carries, shaped like MoldUDP64: feed, line, the venue sequence of the first message inside, and how many follow. The payload is opaque bytes, so the receiver and the arbitrator work for every venue and only the decoder knows one protocol from another. |
 | `core/md/capture.hpp` | Every packet a line delivered, on disk, unaltered, with its hardware receive time. The capture is the evidence and the simulator's input, so it stores what arrived rather than what we made of it. |
 | `core/md/line_receiver.hpp` | One per line: stamps the receive time, captures before anything can reject the packet, hands it up. Does not parse and does not arbitrate. The lines of a feed share one capture, because the arbitrator's input is every line at once. |
+| `core/md/arbitrator.hpp` | One per feed: merges its lines by venue sequence with first arrival winning, finds the holes neither line delivered, asks the venue's recovery service for exactly those, splices the answer in order, and falls back to a snapshot when the answer never comes. A recovery block that straddles what the consumer already has is passed on marked with how much of it is old, never repeated. Publishes `FeedStatus` (healthy, recovering, stale, down) with each line's latency against its sibling. Reads the envelope and never the payload, so it arbitrates every protocol. No clock of its own and no allocation after construction: the same arrivals produce the same stream, the same requests and the same status messages, run after run. |
 | `sim/feed_publisher.hpp` | A venue that misbehaves on purpose: the same messages down lines A and B, with per-line drops, duplicates, reordering and delay, plus the retransmit and snapshot services, and the ability to publish one canonical stream from two processes. |
 | `core/md/identity.hpp` | What identifies a market-data message: the feed it came from and the sequence that feed's venue assigned, never one of ours. Two handlers of the same feed therefore produce identical streams, and a consumer can fail over between publishers with no gap and no duplicate. |
 | `core/util/money.hpp` | Money on the wire is int64, which at 1e-8 units tops out at $92.2bn. The two messages carrying a firm-wide aggregate say which unit they used; engines work in 1e-8 in 128 bits, and the only hard ceiling left is what an `ExposureSnapshot` can carry, about $922 trillion. |
@@ -56,6 +57,7 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 | `sim/` | The simulator harness. `venue_sim.hpp` (level book, several sessions with throttles and cancel-on-disconnect, price-time matching, queue-position fills, drop copy), `feed_sim.hpp`, `client_sim.hpp` (random and adversarial flow with cancels and replaces), `stub_router.hpp` (explicit stand-in for `core/router`), `harness.hpp` (wires the streams, drives the day with the real risk engine and OMS, then replays the core journal cold and recomputes every decision, plan, placement, checkpoint hash and every OMS frame byte for byte), `run_sim.cpp` (scenarios, drills, baselines, `--bench` for front-to-back stage latencies), `scenarios/make_scenario.py` (a scenario is a log of external events). Baselines in `sim/baselines/`. |
 | `core/util/bench.hpp`, `alloc_guard.hpp` | Block-timed recorder with percentiles and JSON rows; a counting allocator so benchmarks assert zero allocations after warm-up. `tools/bench.py` runs the suite, compares to the host-class baseline, and on Linux checks the order path makes no syscalls under strace. |
 | `tests/test_md.cpp` | The transport layer: a day captured byte-exact and replayed identically, malformed and misaddressed packets counted but never captured, drops on one line covered by the other, drops on both filled by a targeted retransmit, duplicates and reordering survived, and two publishers of one canonical stream emitting byte-identical packets. |
+| `tests/test_arb.cpp` | The line arbitrator. The first drill runs a merger that simply forwards every packet through the same checker and requires it to fail, so the eight that follow mean something: a clean day emitted once and in order, one line dying unnoticed, both lines lossy and recovered by targeted retransmit, a recovery service that frames its answer differently from the live stream, a recovery service that loses 40 percent of its own answer, duplicates and reordering, a retransmit that never comes and is escalated to a snapshot with the jump counted, the same impaired day byte-identical across two runs, and a silent feed going stale and then down on the caller's clock. |
 | `tests/fuzz/` | libFuzzer targets for journal recovery and the snapshot loader. |
 | `tests/go/` | Go codec round trip against the C++ log. |
 | `tests/test_codec.cpp`, `tests/test_codec.py` | Cross-language round trip. C++ writes a five-frame log, Python decodes it and walks the `causeSeq` chain; Python writes the same log, C++ decodes it; the two files are byte-identical. |
@@ -118,11 +120,15 @@ reviewed change.
     market-data receive, validate and hand up:        ~5 ns per packet
     the same, plus writing the capture:               ~65 ns per packet (~500 ns before the capture
                                                       buffer was sized; the benchmark found that)
+    line arbitration, healthy A/B feed:               ~7 ns per packet off one line, zero allocations
+                                                      (one copy accepted, the sibling's discarded)
+    the same, every pair arriving back to front:      ~13 ns per packet through the reorder buffer
+    ring hand-off across threads:                     not measurable on one core; needs a pinned two-core host
 
 Throughput figures on an unpinned laptop swing by about half between runs of the same binary, which
 is why `tools/bench.py` gates p99.9 only against a baseline recorded with `--pinned`, and why the
-delivery plan has an item for a pinned CI runner.
-    ring hand-off across threads:                     not measurable on one core; needs a pinned two-core host
+delivery plan has an item for a pinned CI runner. The front-to-back rows swing further still,
+because they are queueing latencies through a whole simulated day rather than a tight loop.
 
 ## Schema evolution in practice
 
