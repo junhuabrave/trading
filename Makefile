@@ -8,7 +8,7 @@ B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
 .PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines goldens
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/test_book build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -57,6 +57,9 @@ build/test_decode: tests/test_decode.cpp core/md/*.hpp sim/itch_sim.hpp sim/sip_
 
 build/test_selector: tests/test_selector.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/test_book: tests/test_book.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@ -lpthread
 
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
@@ -113,6 +116,8 @@ test: check all build/refdata-diff.log
 	./build/test_decode build/refdata-20260915-v1.bin build/dectest --golden tests/golden/itch-day.json
 	@echo "== feed journals and source selector: seek to a watermark, dedupe publishers, switch source"
 	./build/test_selector build/refdata-20260915-v1.bin build/seltest
+	@echo "== book builder: invariants under a recorded day, and readers that never block the writer"
+	./build/test_book build/refdata-20260915-v1.bin build/booktest
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json

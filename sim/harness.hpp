@@ -12,7 +12,7 @@
 #include "identity.hpp"
 #include "venue_sim.hpp"
 #include "stub_router.hpp"
-#include "feed_sim.hpp"
+#include "md_stack.hpp"
 #include "client_sim.hpp"
 #include <deque>
 #include <random>
@@ -32,6 +32,9 @@ using namespace trading::risk;
 // market-data stream is one feed, so the stream id and the feed id are the same number by
 // construction rather than by coincidence.
 inline constexpr uint32_t FEED_XNAS_ITCH = 1;
+// ITCH stamps nanoseconds since the venue day's midnight; this is that midnight, so every venueTs
+// the harness sees is an ordinary epoch timestamp.
+inline constexpr int64_t SESSION_MIDNIGHT_NS = 1'757'894'400'000'000'000LL;
 
 struct Config {
     std::string snapshot, workdir, eventsFile, drill;
@@ -283,7 +286,18 @@ public:
         Engine eng(snap, cfg_.sessions, Engine::Mode::Live);
         StreamReader engCore(coreRing, coreJ, 1), engMd(mdRing, mdJ, 1), venueCore(coreRing, coreJ, 1);
         VenueSim venue(VenueSim::Params{2, 7, cfg_.sessions, cfg_.throttlePerSec, 12'000}, snap.instruments().size() + 1);
-        FeedSim feed(engRef(eng), NSYM, 2, 8, cfg_.seed ^ 0xFEED);
+        // The real stack, not a stand-in: ITCH bytes on two lines, arbitrated, decoded, and built
+        // into a book whose top of book is what the client simulator prices against. Every message
+        // of every simulated day now goes through the components a real day would.
+        const std::string bookPath = cfg_.workdir + "/book.seg";
+        fs::remove(bookPath);
+        MdStack::Params msp{};
+        msp.feedId = FEED_XNAS_ITCH; msp.venueId = 2; msp.sourceId = 8;
+        msp.symbols = NSYM; msp.maxVenueId = 4;
+        msp.midnight = SESSION_MIDNIGHT_NS;
+        msp.seed = cfg_.seed ^ 0xFEED;
+        BookSegment bookSeg(bookPath, NSYM, 4, snap.businessDate(), true);
+        MdStack feed(snap, engRef(eng), msp, bookSeg.base());
         ClientSim client(ClientSim::Params{42, 2, 9, NSYM, cfg_.adversarial, 15, 30}, cfg_.seed ^ 0xC11E);
 
         auto flushEngine = [&]() {
@@ -314,7 +328,18 @@ public:
                 if (f->streamId == 1) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!md.submit(f)) drainMd(); venue.onMd(f); }
                 else submitCore(f);
             } else {
-                feed.burst(uint32_t(rng() % 8), now, [&](FrameHeader* f) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!md.submit(f)) drainMd(); venue.onMd(f); });
+                feed.burst(uint32_t(1 + rng() % 3), now, [&](const FrameHeader* cf) {
+                    auto* f = const_cast<FrameHeader*>(cf);
+                    f->flags = uint16_t(f->flags | FrameFlags::simulated);
+                    // A per-feed stream is replayed to a watermark of (feedId, venueSeq), so a
+                    // message the venue does not sequence cannot go on one: there is no position to
+                    // replay to. VenueStatus is the case in practice - a venue-wide open or close
+                    // rather than a fact about a symbol - and it belongs on the core stream, which
+                    // is replayed by a sequence of ours.
+                    if (md::identityVenueSeq(f) == 0) { submitCore(f); return; }
+                    while (!md.submit(f)) drainMd();
+                    venue.onMd(f);
+                });
                 if (cfg_.drill == "rate-burst" && step == steps / 2) client.burst(2500, now, [&](uint32_t s) { return feed.mid(s); }, submitCore);
                 else client.step(now, [&](uint32_t s) { return feed.mid(s); }, submitCore);
             }
@@ -390,7 +415,7 @@ private:
     static const RefData& engRef(const Engine& e) { return e.risk().refData(); }
     template <class Submit> void setupAccount(Submit& submit, uint32_t acct) {
         Frame<LimitUpdate> l; l.init(); l.header.sourceId = 13; l.body.accountIdx = acct; l.body.maxOrderQty = 5000; l.body.maxOrderNotional = 5'000'000LL * 100'000'000LL;
-        l.body.maxGrossExposure = 500'000'000LL * 100'000'000LL; l.body.maxNetExposure = 300'000'000LL * 100'000'000LL; l.body.priceCollarBps = 500; l.body.maxMsgRate = 2000; l.body.maxOpenOrders = 300;
+        l.body.maxGrossExposure = 500'000'000LL * 100'000'000LL; l.body.maxNetExposure = 300'000'000LL * 100'000'000LL; l.body.priceCollarBps = 500; l.body.maxMsgRate = 2000; l.body.maxOpenOrders = 2000;
         l.body.dupWindowMs = cfg_.adversarial ? 50 : 0; submit(&l.header);
         Frame<BuyingPowerUpdate> b; b.init(); b.header.sourceId = 11; b.body.accountIdx = acct; b.body.buyingPower = 1'000'000'000LL * 100'000'000LL; submit(&b.header);
         Frame<LocateGranted> g; g.init(); g.header.sourceId = 10; g.body.locateId = 1; g.body.accountIdx = acct; g.body.symbolIdx = 7; g.body.qty = 1'000'000; g.body.result = LocateResult::Granted; g.body.expiryTs = INT64_MAX; submit(&g.header);

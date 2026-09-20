@@ -3,14 +3,14 @@
   "seed": 7,
   "steps": 3000,
   "orders": 1922,
-  "accepted": 1387,
-  "rejected": 535,
-  "fills": 1301,
-  "cancelled": 342,
-  "children": 1408,
+  "accepted": 1337,
+  "rejected": 585,
+  "fills": 638,
+  "cancelled": 718,
+  "children": 1386,
   "checkpoints": 14,
-  "coreSeq": 27143,
-  "mdSeq": 10355,
-  "verified": 12755,
-  "finalHash": "1313ce21b3dd10afc1d94ab4bfaab9a0ab7e199ce4f49af01bb8c10a22e63774"
+  "coreSeq": 26668,
+  "mdSeq": 9106,
+  "verified": 12804,
+  "finalHash": "2c9b326fb918c32185618518844975a91414ea0cd656aedf13b46a14d57da629"
 }

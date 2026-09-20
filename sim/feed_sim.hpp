@@ -1,4 +1,13 @@
-// sim/feed_sim.hpp : synthetic market data. A random-walk level book per symbol around the
+// sim/feed_sim.hpp : synthetic market data, the cheap way.
+//
+// This was the harness's market until MD-8. It is not any more: sim/md_stack.hpp runs ITCH bytes
+// through the real receivers, arbitrator, decoder and book, and what the harness believes now comes
+// from a book rather than from a remembered number. What this is still good for is a deterministic
+// source of well-formed normalised messages for tests that are not about market data - the
+// arbitrator drills need a canonical stream to impair, and the transport tests need something to
+// carry - so it stays, with its job written down.
+//
+// A random-walk level book per symbol around the
 // reference price, emitting BookDelta (absolute quantities), Trade and Nbbo for one venue.
 // Every message carries a venueSeq, monotonic within the feed: that, with the feedId the frame's
 // streamId carries, is what identifies it and what a watermark records. Deterministic for a seed.

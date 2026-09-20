@@ -14,6 +14,7 @@
 #include "sip.hpp"
 #include "selector.hpp"
 #include "feed_journal.hpp"
+#include "book.hpp"
 #include "itch_sim.hpp"
 #include <filesystem>
 #include <vector>
@@ -251,6 +252,84 @@ int main(int argc, char** argv) {
                      (unsigned long long)j.records(), (unsigned long long)j.sizeBytes(), (unsigned long long)got,
                      100.0 * double(j.bytesScanned()) / double(j.sizeBytes()));
         std::filesystem::remove_all(dir);
+    }
+
+    // 7. packet to published top of book, which is the figure document 3 puts a number on: a
+    // packet off the wire, decoded, applied to the ladders, and the consolidated top published
+    // into shared memory where the router will read it. Under two microseconds at the median.
+    {
+        refdata::RefData rd; rd.load(snap);
+        std::vector<std::vector<std::byte>> packets;
+        {
+            size_t i = 0; uint64_t seq = 1'000'000;
+            alignas(16) std::byte buf[MAX_PACKET];
+            while (i < at.size()) {
+                PacketBuilder pb(buf);
+                pb.begin(1, 0, seq + 1, MIDNIGHT);
+                itch::BlockWriter bw(buf + sizeof(PacketHeader), MAX_PACKET - sizeof(PacketHeader));
+                size_t n = 0;
+                while (i < at.size() && n < 8 && bw.add(flat.data() + at[i].first, at[i].second)) { ++i; ++n; }
+                if (n == 0) break;
+                pb.header()->msgCount = uint16_t(n);
+                pb.header()->payloadLen = uint16_t(bw.size());
+                packets.emplace_back(buf, buf + pb.size());
+                seq += n;
+            }
+        }
+        const std::string segPath = "build/bookbench.seg";
+        std::filesystem::remove(segPath);
+        BookSegment seg(segPath, 10, 4, 20260915, true);
+        BookBuilder::Params bp{};
+        bp.sourceId = 12; bp.feedId = 1; bp.maxSymbolIdx = 10; bp.maxVenueId = 4;
+        BookBuilder book(rd, bp, seg.base());
+        itch::Decoder::Params ip{};
+        ip.feedId = 1; ip.venueId = 2; ip.sourceId = 8; ip.sessionMidnightNs = MIDNIGHT;
+        itch::Decoder dec(snap, ip);
+        uint64_t published = 0;
+        int64_t now = MIDNIGHT;
+        auto out = [&](const FrameHeader*) { ++published; };
+        auto one = [&](const std::vector<std::byte>& p) {
+            dec.decode(*reinterpret_cast<const PacketHeader*>(p.data()), 0,
+                       [&](const FrameHeader* f) { book.apply(f, now, out); });
+            now += 2000;
+        };
+        const size_t warm = packets.size() / 4;
+        for (size_t i = 0; i < warm; ++i) one(packets[i]);
+        Recorder r(1, packets.size()); AllocScope a;          // one packet a block
+        for (size_t i = warm; i < packets.size(); ++i) { r.begin(); one(packets[i]); r.end(); }
+        const uint64_t alloc = a.delta();
+        const Percentiles pc = r.finish();
+        report("md.packet_to_published", pc, alloc, "a packet off the wire decoded, applied to the ladders and published to shared memory");
+        if (alloc) { std::fprintf(stderr, "FAIL: the packet path allocated %llu times\n", (unsigned long long)alloc); return 1; }
+        if (pc.p50 > 2000.0) {
+            std::fprintf(stderr, "FAIL: packet to published %.0f ns at p50, over the 2 us bar\n", pc.p50);
+            return 1;
+        }
+        report("md.book_apply", Percentiles{pc.p50 / 8, pc.p99 / 8, pc.p999 / 8, pc.max / 8, pc.mean / 8, pc.samples},
+               0, "the same divided by the eight messages a packet carries");
+        std::fprintf(stderr, "book: %zu packets, %llu top-of-book messages published, %llu deltas, %llu rebases\n",
+                     packets.size(), (unsigned long long)published, (unsigned long long)book.deltas(),
+                     (unsigned long long)book.rebases());
+
+        // 8. and what it costs the router to read one, which it does on every order
+        {
+            BookReader rdr = book.reader();
+            TopBody t{};
+            uint64_t good = 0;
+            const size_t N = 1'000'000;
+            for (size_t i = 0; i < N / 10; ++i) good += rdr.top(uint32_t(1 + i % 10), t);
+            Recorder rr(B, N / B); AllocScope aa;
+            for (size_t i = 0; i + B <= N; i += B) {
+                rr.begin();
+                for (size_t k = 0; k < B; ++k) good += rdr.top(uint32_t(1 + (i + k) % 10), t);
+                rr.end();
+            }
+            const uint64_t al2 = aa.delta();
+            report("md.book_read_top", rr.finish(), al2, "a reader copying the top of book out of shared memory and checking it");
+            if (al2) { std::fprintf(stderr, "FAIL: the read path allocated %llu times\n", (unsigned long long)al2); return 1; }
+            std::fprintf(stderr, "reads: %llu consistent\n", (unsigned long long)good);
+        }
+        std::filesystem::remove(segPath);
     }
 
     std::fprintf(stderr, "sink saw %llu frames\n", (unsigned long long)frames);
