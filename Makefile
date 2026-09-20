@@ -6,9 +6,9 @@ B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX5
 INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Icore/md -Isim -Ithird_party/blake3
 B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
-.PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines
+.PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines goldens
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -18,7 +18,8 @@ check:
 	python3 tools/schema_check.py schema/versions/trading-v1.xml schema/versions/trading-v2.xml
 	python3 tools/schema_check.py schema/versions/trading-v2.xml schema/versions/trading-v3.xml
 	python3 tools/schema_check.py schema/versions/trading-v3.xml schema/versions/trading-v4.xml
-	python3 tools/schema_check.py schema/versions/trading-v4.xml schema/trading.xml
+	python3 tools/schema_check.py schema/versions/trading-v4.xml schema/versions/trading-v5.xml
+	python3 tools/schema_check.py schema/versions/trading-v5.xml schema/trading.xml
 
 build:
 	mkdir -p build
@@ -50,11 +51,17 @@ build/test_md: tests/test_md.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed_s
 build/test_arb: tests/test_arb.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed_sim.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
+build/test_decode: tests/test_decode.cpp core/md/*.hpp sim/itch_sim.hpp sim/sip_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/bench_md: tests/bench_md.cpp core/md/*.hpp core/util/*.hpp gen/cpp/trading.hpp | build
 	$(CXX) $(CXXFLAGS) $(INC) $< -o $@
+
+build/bench_decode: tests/bench_decode.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/bench_oms: tests/bench_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
@@ -98,6 +105,8 @@ test: check all build/refdata-diff.log
 	./build/test_md build/refdata-20260915-v1.bin build/mdtest
 	@echo "== line arbitrator: a forwarder is caught, then gap-free through loss, recovery and reordering"
 	./build/test_arb build/refdata-20260915-v1.bin build/arbtest
+	@echo "== decoders: ITCH 5.0 on the wire, the book it describes, and the tape against it"
+	./build/test_decode build/refdata-20260915-v1.bin build/dectest --golden tests/golden/itch-day.json
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
@@ -112,7 +121,7 @@ test: check all build/refdata-diff.log
 # Benchmarks: every binary prints JSON rows; tools/bench.py collects, compares to
 # bench/baselines/<host-class>.json. `bench` is informational, `benchgate` fails on regression
 # (use on a pinned host), `bench-baseline` records a new baseline after a reviewed change.
-BENCH_BINS = build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/run_sim
+BENCH_BINS = build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/run_sim
 bench: $(BENCH_BINS) build/refdata-20260915-v1.bin
 	python3 tools/bench.py run
 benchgate: $(BENCH_BINS) build/refdata-20260915-v1.bin
@@ -137,6 +146,10 @@ build/cpp.log: build/test_codec
 
 clean:
 	rm -rf build gen/cpp gen/py gen/go gen/layout.md
+
+# Regenerate the decoder golden after an intentional change to the decoder or the wire generator.
+goldens: build/test_decode build/refdata-20260915-v1.bin
+	./build/test_decode build/refdata-20260915-v1.bin build/dectest --write-golden tests/golden/itch-day.json
 
 # Regenerate the simulator baselines after an intentional behaviour change (review the diff).
 baselines: build/run_sim build/refdata-20260915-v1.bin

@@ -26,6 +26,7 @@ BENCHES = [
     ("bench_risk", ["build/bench_risk", SNAP]),
     ("bench_oms", ["build/bench_oms", SNAP]),
     ("bench_md", ["build/bench_md", "build/mdbench"]),
+    ("bench_decode", ["build/bench_decode", SNAP]),
     ("run_sim --bench", ["build/run_sim", SNAP, "build/sim/bench", "--bench", "--steps", "20000"]),
 ]
 GATES = {"p50": 0.05, "p999": 0.15, "value": -0.05}

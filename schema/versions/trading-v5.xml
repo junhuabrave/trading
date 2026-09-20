@@ -20,7 +20,7 @@
     strings fixed char[N], null padded, ASCII, reference/cold path only
 -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
-    package="trading" id="1" version="6"
+    package="trading" id="1" version="5"
     semanticVersion="2026.09" description="Broker-dealer trading stack schema"
     byteOrder="littleEndian" headerType="FrameHeader">
   <types>
@@ -256,12 +256,6 @@
       <validValue name="Sip">2</validValue>
       <validValue name="Vendor">3</validValue>
     </enum>
-    <enum name="DivergenceKind" encodingType="uint8" description="how a direct feed's NBBO and the SIP's disagreed">
-      <validValue name="Price">1</validValue>
-      <validValue name="Crossed">2</validValue>
-      <validValue name="SipStale">3</validValue>
-      <validValue name="DirectStale">4</validValue>
-    </enum>
     <enum name="SessionState" encodingType="uint8" description="venue order-entry session">
       <validValue name="Up">1</validValue>
       <validValue name="Down">2</validValue>
@@ -282,10 +276,6 @@
       <choice name="simulated">1</choice>
       <choice name="lastInBatch">2</choice>
       <choice name="checkpointBoundary">3</choice>
-      <!-- The last normalised message a decoder produced from one venue packet. A consumer that
-           acts per packet rather than per message waits for it. BookFlags.endOfPacket says the same
-           thing and predates this, but only BookDelta carries it, and a packet can end on a trade. -->
-      <choice name="endOfPacket">4</choice>
     </set>
     <set name="OrderFlags" encodingType="uint8">
       <choice name="locateAttached">0</choice>
@@ -870,19 +860,6 @@
     <field name="gapCount"       id="6" type="uint32"/>
     <field name="pad2"           id="7" type="Pad4"/>
     <field name="lineLatencyDeltaNs" id="8" type="int64" description="B line minus A line at the last arbitrated packet"/>
-  </sbe:message>
-
-  <sbe:message name="NbboDivergence" id="208" blockLength="64" description="a direct feed's NBBO and the SIP's disagreed; the evidence a best-execution review asks for">
-    <field name="symbolIdx"      id="1" type="SymIdx"/>
-    <field name="kind"           id="2" type="DivergenceKind"/>
-    <field name="pad"            id="3" type="uint8" length="3"/>
-    <field name="directBid"      id="4" type="Price"/>
-    <field name="directAsk"      id="5" type="Price"/>
-    <field name="sipBid"         id="6" type="Price"/>
-    <field name="sipAsk"         id="7" type="Price"/>
-    <field name="durationNs"     id="8" type="int64" description="how long they disagreed; 0 means the disagreement was still going when this was written"/>
-    <field name="venueSeq"       id="9" type="uint64"/>
-    <field name="venueTs"        id="10" type="Ts"/>
   </sbe:message>
 
   <!-- =====================================================================

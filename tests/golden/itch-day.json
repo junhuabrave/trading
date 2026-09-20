@@ -1,0 +1,11 @@
+{
+  "wireMessages": 200015,
+  "frames": 240078,
+  "deltas": 193902,
+  "trades": 41134,
+  "statuses": 2034,
+  "imbalances": 3008,
+  "liveOrders": 35049,
+  "liveLevels": 442,
+  "decodedHash": "989f548d68a9b683"
+}

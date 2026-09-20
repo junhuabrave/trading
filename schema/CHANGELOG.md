@@ -3,6 +3,17 @@
 Every version bump is recorded here with the reason. `tools/schema_check.py OLD NEW`
 must pass before a bump merges.
 
+## v6 (2026-09-20)
+Frozen v5 copy under `schema/versions/trading-v5.xml`. All additions append-only; no block length changed.
+* `FrameFlags.endOfPacket` (bit 4): the last normalised message a decoder produced from one venue
+  packet. `BookFlags.endOfPacket` says the same thing but only `BookDelta` carries it, and a packet
+  can end on a trade, a status or an imbalance.
+* `NbboDivergence` (208) and enum `DivergenceKind`: where a direct feed's NBBO and the SIP's
+  disagree, in what shape, by how much and for how long. Best-execution review asks for exactly
+  this and it has to be on the log to be answerable. One record per episode: `kind` always names
+  the shape, and `durationNs` is how long it lasted, or 0 when the disagreement was still going
+  when the record was written.
+
 ## v5 (2026-09-19)
 Frozen v4 copy under `schema/versions/trading-v4.xml`. Money on the wire is int64; at 1e-8 units
 that tops out at $92.2bn, which is fine for one order and far too small for a firm's gross exposure

@@ -1,13 +1,18 @@
 # Trading stack
 
-**Status: v0.3 in progress, pre-alpha infrastructure.** Schema (v3), codecs in C++, Python and Go,
+**Status: v0.3 in progress, pre-alpha infrastructure.** Schema (v6), codecs in C++, Python and Go,
 snapshot tooling, a segmented sequencer core, the pre-trade risk engine, the order manager, a
 benchmark harness with regression gates, and a simulator harness that runs a synthetic day from
 client order through risk, OMS, a stub router and a simulated venue and back, and proves it replays
-bit for bit including every client report. Not a trading system yet: no router, venue gateways or
-market-data handlers; the harness uses explicit stand-ins for them. The design documents are in
-`docs/`: 1 is the system design, 2 the schema and security master, 3 the gap analysis and component
-designs, 4 the delivery plan to go-live (every remaining task as an assignable work item).
+bit for bit including every client report. The market-data stack is up to the decoders: line
+receivers with capture, the line arbitrator, the ITCH 5.0 and SIP decoders and the direct-against-
+official NBBO comparison. Not a trading system yet: no router, no venue or client gateways, and no
+book builder or source selector above the decoders; the harness uses explicit stand-ins. Two things
+named in the delivery plan are still outstanding inside what is built: the ITCH golden runs against
+a generated day rather than a published Nasdaq sample, and the SIP wire layout is a stand-in for
+the licensed one. The design documents are in `docs/`: 1 is the system design, 2 the schema and
+security master, 3 the gap analysis and component designs, 4 the delivery plan to go-live (every
+remaining task as an assignable work item).
 
 Everything here is exercised by one command:
 
@@ -18,6 +23,7 @@ Everything here is exercised by one command:
     make fuzz      # libFuzzer over journal recovery and the snapshot loader (clang)
     make gotest    # Go codec round trip (needs a Go toolchain)
     make baselines # regenerate simulator baselines after an intentional behaviour change
+    make goldens   # regenerate the decoder golden after an intentional decoder or generator change
 
 Requires g++ 13+ or clang 17+ (C++23), python3 with `blake3` (`pip install blake3`).
 On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a working SDK).
@@ -26,7 +32,7 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 
 | Path | Purpose |
 |---|---|
-| `schema/trading.xml` | The one schema: primitive aliases, 23 enums, 6 bit sets, 14 snapshot record composites, 64 messages. SBE-compatible XML. |
+| `schema/trading.xml` | The one schema: primitive aliases, 30 enums, 7 bit sets, 15 snapshot record composites, 73 messages. SBE-compatible XML. |
 | `schema/CHANGELOG.md` | Every version bump and why. |
 | `tools/sbegen.py` | Generator. Parses the schema, computes and verifies layouts (natural alignment, declared sizes, 16-byte message padding), emits `gen/cpp/trading.hpp`, `gen/py/trading.py`, `gen/go/trading.go`, `gen/layout.md`. |
 | `tools/loginspect.py` | Look inside journals and frame logs: `dump` by sequence range or template, `chain` follows `causeSeq` backwards (the latency waterfall), `diff` two logs, `stats` per template and source. |
@@ -37,6 +43,9 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 | `core/md/capture.hpp` | Every packet a line delivered, on disk, unaltered, with its hardware receive time. The capture is the evidence and the simulator's input, so it stores what arrived rather than what we made of it. |
 | `core/md/line_receiver.hpp` | One per line: stamps the receive time, captures before anything can reject the packet, hands it up. Does not parse and does not arbitrate. The lines of a feed share one capture, because the arbitrator's input is every line at once. |
 | `core/md/arbitrator.hpp` | One per feed: merges its lines by venue sequence with first arrival winning, finds the holes neither line delivered, asks the venue's recovery service for exactly those, splices the answer in order, and falls back to a snapshot when the answer never comes. A recovery block that straddles what the consumer already has is passed on marked with how much of it is old, never repeated. Publishes `FeedStatus` (healthy, recovering, stale, down) with each line's latency against its sibling. Reads the envelope and never the payload, so it arbitrates every protocol. No clock of its own and no allocation after construction: the same arrivals produce the same stream, the same requests and the same status messages, run after run. |
+| `core/md/itch.hpp` | Nasdaq TotalView-ITCH 5.0, at the published byte offsets and lengths. Order reference table and price-level aggregates, because our `BookDelta` carries the absolute quantity at a level after the change: a consumer that has to accumulate deltas cannot join late and cannot recover from a gap. Emits `BookDelta`, `Trade`, `SymbolStatus`, `Imbalance` and `VenueStatus`, with the last message of every packet marked. No clock, no allocation after construction, and the callback is a template rather than a `std::function`, because this is one call per message on every feed all day. |
+| `core/md/sip.hpp` | The consolidated tape (UTP and CTA) for the official NBBO, and `NbboMonitor`, which is why it is carried: it compares what our direct feeds saw with what the tape says and writes one `NbboDivergence` per episode, naming the shape (a price difference, a crossed market, a side that has stopped) and how long it lasted. A tape that is merely late is not news and is not written. The wire layout here is a stand-in with the right shape, not the licensed one; encoder and decoder sit in the same file so substituting the real offsets is one change. |
+| `sim/itch_sim.hpp`, `sim/sip_sim.hpp` | A Nasdaq day on the wire, and a tape that is late, wrong, crossed or stopped. The ITCH generator only executes, cancels and replaces orders it added and never crosses its own book, so the orders it leaves live can be aggregated into levels and compared with the levels the decoder built one delta at a time. |
 | `sim/feed_publisher.hpp` | A venue that misbehaves on purpose: the same messages down lines A and B, with per-line drops, duplicates, reordering and delay, plus the retransmit and snapshot services, and the ability to publish one canonical stream from two processes. |
 | `core/md/identity.hpp` | What identifies a market-data message: the feed it came from and the sequence that feed's venue assigned, never one of ours. Two handlers of the same feed therefore produce identical streams, and a consumer can fail over between publishers with no gap and no duplicate. |
 | `core/util/money.hpp` | Money on the wire is int64, which at 1e-8 units tops out at $92.2bn. The two messages carrying a firm-wide aggregate say which unit they used; engines work in 1e-8 in 128 bits, and the only hard ceiling left is what an `ExposureSnapshot` can carry, about $922 trillion. |
@@ -58,6 +67,7 @@ On macOS: `make test CXX=clang++` (Homebrew LLVM works; Apple clang needs a work
 | `core/util/bench.hpp`, `alloc_guard.hpp` | Block-timed recorder with percentiles and JSON rows; a counting allocator so benchmarks assert zero allocations after warm-up. `tools/bench.py` runs the suite, compares to the host-class baseline, and on Linux checks the order path makes no syscalls under strace. |
 | `tests/test_md.cpp` | The transport layer: a day captured byte-exact and replayed identically, malformed and misaddressed packets counted but never captured, drops on one line covered by the other, drops on both filled by a targeted retransmit, duplicates and reordering survived, and two publishers of one canonical stream emitting byte-identical packets. |
 | `tests/test_arb.cpp` | The line arbitrator. The first drill runs a merger that simply forwards every packet through the same checker and requires it to fail, so the eight that follow mean something: a clean day emitted once and in order, one line dying unnoticed, both lines lossy and recovered by targeted retransmit, a recovery service that frames its answer differently from the live stream, a recovery service that loses 40 percent of its own answer, duplicates and reordering, a retransmit that never comes and is escalated to a snapshot with the jump counted, the same impaired day byte-identical across two runs, and a silent feed going stale and then down on the caller's clock. |
+| `tests/test_decode.cpp` | The decoders. Every ITCH message type on the wire at the published length; the book invariant, where the levels built one delta at a time must equal the aggregate of the orders the venue actually left live; the order reference table against the venue's own live set; packets with a skip honoured and the end of each marked; the same bytes twice producing an identical hash, held against `tests/golden/itch-day.json`; and input a decoder has to survive rather than trust. Then the tape: quotes with the national best, prints, trading actions, and a divergence monitor that must stay silent for a tape that is only late and must name all three shapes for one that is wrong, crossed and stopped. |
 | `tests/fuzz/` | libFuzzer targets for journal recovery and the snapshot loader. |
 | `tests/go/` | Go codec round trip against the C++ log. |
 | `tests/test_codec.cpp`, `tests/test_codec.py` | Cross-language round trip. C++ writes a five-frame log, Python decodes it and walks the `causeSeq` chain; Python writes the same log, C++ decodes it; the two files are byte-identical. |
@@ -123,6 +133,12 @@ reviewed change.
     line arbitration, healthy A/B feed:               ~7 ns per packet off one line, zero allocations
                                                       (one copy accepted, the sibling's discarded)
     the same, every pair arriving back to front:      ~13 ns per packet through the reorder buffer
+    ITCH 5.0 decode:                                  ~58 ns per message, zero allocations; document 3
+                                                      asks for 3 M messages/s per feed process and
+                                                      bench_decode fails below it
+    SIP quote decode:                                 ~40 ns per message
+    direct against official NBBO:                     ~4 ns per update, worst case (an episode opened
+                                                      and closed on every one)
     ring hand-off across threads:                     not measurable on one core; needs a pinned two-core host
 
 Throughput figures on an unpinned laptop swing by about half between runs of the same binary, which
