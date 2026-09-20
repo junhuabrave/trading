@@ -8,7 +8,7 @@ B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
 .PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -44,8 +44,14 @@ build/test_risk: tests/test_risk.cpp core/risk/*.hpp core/seq/*.hpp core/refdata
 build/run_sim: sim/run_sim.cpp sim/*.hpp core/md/*.hpp core/oms/*.hpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
+build/test_md: tests/test_md.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed_sim.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/bench_md: tests/bench_md.cpp core/md/*.hpp core/util/*.hpp gen/cpp/trading.hpp | build
+	$(CXX) $(CXXFLAGS) $(INC) $< -o $@
 
 build/bench_oms: tests/bench_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
@@ -85,6 +91,8 @@ test: check all build/refdata-diff.log
 	@echo "== oms: state table, every lifecycle, replay regenerates every client report"
 	./build/test_oms build/refdata-20260915-v1.bin build/omstest
 	python3 tools/reason_coverage.py build/risktest/risk.jnl build/omstest/oms.log
+	@echo "== market data: capture byte-exact, line redundancy, retransmit, dual publishers"
+	./build/test_md build/refdata-20260915-v1.bin build/mdtest
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
@@ -99,7 +107,7 @@ test: check all build/refdata-diff.log
 # Benchmarks: every binary prints JSON rows; tools/bench.py collects, compares to
 # bench/baselines/<host-class>.json. `bench` is informational, `benchgate` fails on regression
 # (use on a pinned host), `bench-baseline` records a new baseline after a reviewed change.
-BENCH_BINS = build/bench build/bench_seq build/bench_risk build/bench_oms build/run_sim
+BENCH_BINS = build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/run_sim
 bench: $(BENCH_BINS) build/refdata-20260915-v1.bin
 	python3 tools/bench.py run
 benchgate: $(BENCH_BINS) build/refdata-20260915-v1.bin

@@ -25,6 +25,8 @@ inline Identity identity(const FrameHeader* h) noexcept {
     return {h->streamId, 0};
 }
 
+inline uint64_t identityVenueSeq(const FrameHeader* h) noexcept { return identity(h).venueSeq; }
+
 // Template ids 200 to 299 are the market-data family.
 inline bool isMarketData(const FrameHeader* h) noexcept { return h->templateId >= 200 && h->templateId < 300; }
 
