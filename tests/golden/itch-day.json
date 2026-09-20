@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 7,
   "wireMessages": 200015,
   "frames": 240078,
   "deltas": 193902,
@@ -7,5 +8,5 @@
   "imbalances": 3008,
   "liveOrders": 35049,
   "liveLevels": 442,
-  "decodedHash": "989f548d68a9b683"
+  "decodedHash": "266b81c10ecf34ec"
 }

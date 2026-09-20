@@ -8,7 +8,7 @@ B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
 .PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines goldens
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -19,7 +19,8 @@ check:
 	python3 tools/schema_check.py schema/versions/trading-v2.xml schema/versions/trading-v3.xml
 	python3 tools/schema_check.py schema/versions/trading-v3.xml schema/versions/trading-v4.xml
 	python3 tools/schema_check.py schema/versions/trading-v4.xml schema/versions/trading-v5.xml
-	python3 tools/schema_check.py schema/versions/trading-v5.xml schema/trading.xml
+	python3 tools/schema_check.py schema/versions/trading-v5.xml schema/versions/trading-v6.xml
+	python3 tools/schema_check.py schema/versions/trading-v6.xml schema/trading.xml
 
 build:
 	mkdir -p build
@@ -52,6 +53,9 @@ build/test_arb: tests/test_arb.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/test_decode: tests/test_decode.cpp core/md/*.hpp sim/itch_sim.hpp sim/sip_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/test_selector: tests/test_selector.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -107,6 +111,8 @@ test: check all build/refdata-diff.log
 	./build/test_arb build/refdata-20260915-v1.bin build/arbtest
 	@echo "== decoders: ITCH 5.0 on the wire, the book it describes, and the tape against it"
 	./build/test_decode build/refdata-20260915-v1.bin build/dectest --golden tests/golden/itch-day.json
+	@echo "== feed journals and source selector: seek to a watermark, dedupe publishers, switch source"
+	./build/test_selector build/refdata-20260915-v1.bin build/seltest
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
@@ -130,11 +136,12 @@ bench-baseline: $(BENCH_BINS) build/refdata-20260915-v1.bin
 	python3 tools/bench.py run --write
 
 # libFuzzer targets (clang only): journal recovery and the snapshot loader over corrupt input
-fuzz: build/fuzz_journal build/fuzz_snapshot
+fuzz: build/fuzz_journal build/fuzz_snapshot build/fuzz_feedjournal
 	./build/fuzz_journal -max_total_time=$(FUZZ_SECONDS) -max_len=8192
 	./build/fuzz_snapshot -max_total_time=$(FUZZ_SECONDS) -max_len=8192
+	./build/fuzz_feedjournal -max_total_time=$(FUZZ_SECONDS) -max_len=8192
 FUZZ_SECONDS ?= 30
-build/fuzz_%: tests/fuzz/fuzz_%.cpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/fuzz_%: tests/fuzz/fuzz_%.cpp core/seq/*.hpp core/md/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) -std=c++23 -O1 -g -fsanitize=fuzzer,address,undefined $(INC) $< $(B3OBJ) -o $@
 
 # Go codec round trip (needs a Go toolchain; CI runs it)

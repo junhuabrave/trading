@@ -3,6 +3,16 @@
 Every version bump is recorded here with the reason. `tools/schema_check.py OLD NEW`
 must pass before a bump merges.
 
+## v7 (2026-09-20)
+Frozen v6 copy under `schema/versions/trading-v6.xml`. One addition, no layout change.
+* Enum `MdSwitchReason`: why the source selector moved between market-data sources. `MdSourceSwitch`
+  is a sequenced, replayable event and a best-execution reviewer will ask why it happened, so the
+  answer belongs in the schema where the Python and Go codecs and `loginspect` can name it.
+  `MdSourceSwitch.reason` stays `uint8` because a field's type is frozen once released; the enum
+  names the values it carries. The reject-reason table in `schema/reasons.csv` was the other
+  candidate and is the wrong home: `tools/reason_coverage.py` requires every code in it to appear
+  in a `RiskDecision`, `ExecReport` or `OrderState`, and a source switch appears in none of them.
+
 ## v6 (2026-09-20)
 Frozen v5 copy under `schema/versions/trading-v5.xml`. All additions append-only; no block length changed.
 * `FrameFlags.endOfPacket` (bit 4): the last normalised message a decoder produced from one venue

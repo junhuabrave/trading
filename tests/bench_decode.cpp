@@ -12,7 +12,10 @@
 #include "bench.hpp"
 #include "itch.hpp"
 #include "sip.hpp"
+#include "selector.hpp"
+#include "feed_journal.hpp"
 #include "itch_sim.hpp"
+#include <filesystem>
 #include <vector>
 
 using namespace trading; using namespace trading::md; using namespace trading::sim;
@@ -167,6 +170,87 @@ int main(int argc, char** argv) {
         if (al) { std::fprintf(stderr, "FAIL: divergence monitor allocated %llu times\n", (unsigned long long)al); return 1; }
         std::fprintf(stderr, "divergence: %llu episodes opened and closed, %llu long enough to record\n",
                      (unsigned long long)mon.episodes(), (unsigned long long)records);
+    }
+
+    // 5. the source selector, in its steady state: two publishers of one feed, so half of what it
+    // sees is the second copy of something it has already forwarded. That is the shape of a normal
+    // day with redundancy on, and it is one call per message on top of the decoder.
+    {
+        refdata::RefData rd; rd.load(snap);
+        SourceSelector::Params sp{}; sp.sourceId = 20;
+        SourceSelector sel(rd, sp, [](const FrameHeader*) {});
+        sel.addSource(1, 0);
+        uint64_t out = 0;
+        auto pass = [&](const FrameHeader*) { ++out; };
+        Frame<BookDelta> a{}, b{};
+        a.init(); a.header.streamId = 1; a.header.sourceId = 8;
+        a.body.symbolIdx = 1; a.body.venueId = 2; a.body.qty = 100;
+        b = a; b.header.sourceId = 9;
+        const size_t N = 1'000'000;
+        uint64_t vs = 1'000'000;
+        auto both = [&](int64_t at) {
+            a.body.venueSeq = b.body.venueSeq = ++vs;
+            sel.onMessage(&a.header, at, pass);
+            sel.onMessage(&b.header, at, pass);
+        };
+        for (size_t i = 0; i < N / 10; ++i) both(int64_t(i) * 100);
+        Recorder r(B * 2, N / B); AllocScope al;              // two arrivals per distinct message
+        int64_t t = int64_t(N) * 100;
+        for (size_t i = 0; i + B <= N; i += B) { r.begin(); for (size_t k = 0; k < B; ++k) both(t + int64_t(i + k) * 100); r.end(); }
+        const uint64_t alloc = al.delta();
+        report("md.selector_dedupe", r.finish(), alloc, "per arrival with two publishers: identity compared, one forwarded and one dropped");
+        if (alloc) { std::fprintf(stderr, "FAIL: selector allocated %llu times\n", (unsigned long long)alloc); return 1; }
+        std::fprintf(stderr, "selector: %llu forwarded, %llu dropped as the second copy\n",
+                     (unsigned long long)out, (unsigned long long)sel.duplicates());
+    }
+
+    // 6. writing the arbitrated packet stream to its journal, which happens once per packet on
+    // every feed and is the only thing in the market-data path that touches a disk.
+    {
+        const std::string dir = "build/mdjbench";
+        std::filesystem::remove_all(dir);
+        alignas(16) std::byte pkt[MAX_PACKET];
+        PacketBuilder pb(pkt);
+        pb.begin(1, 0, 1'000'000, MIDNIGHT);
+        for (int i = 0; i < 4; ++i) {
+            Frame<BookDelta> f; f.init(); f.header.streamId = 1;
+            f.body.symbolIdx = uint32_t(1 + i); f.body.venueId = 2; f.body.qty = 500;
+            f.body.venueSeq = 1'000'000 + uint64_t(i);
+            pb.add(&f.header);
+        }
+        const uint32_t len = uint32_t(pb.size());
+        FeedJournal j(dir, 1, JournalKind::Packets, 20260915);
+        uint64_t seq = 1'000'000;
+        const size_t N = 200'000;
+        for (size_t i = 0; i < N / 10; ++i) { pb.header()->firstSeq = seq; j.append(seq, 4, MIDNIGHT, 0, pkt, len); seq += 4; }
+        Recorder r(B, N / B); AllocScope al;
+        for (size_t i = 0; i + B <= N; i += B) {
+            r.begin();
+            for (size_t k = 0; k < B; ++k) { pb.header()->firstSeq = seq; j.append(seq, 4, MIDNIGHT, 0, pkt, len); seq += 4; }
+            r.end();
+        }
+        const uint64_t alloc = al.delta();
+        report("md.feed_journal_append", r.finish(), alloc, "one arbitrated packet appended to the per-feed journal, buffered");
+        if (alloc) { std::fprintf(stderr, "FAIL: journal append allocated %llu times\n", (unsigned long long)alloc); return 1; }
+        j.commit(true);
+
+        // and the seek the done-when is about: replaying from near the end must read the tail, not
+        // the journal. Reported as the fraction actually read.
+        const uint64_t mark = j.coveredTo() - (j.coveredTo() - j.firstVenueSeq()) / 10;
+        uint64_t got = 0;
+        const int64_t t0 = nowNs();
+        j.replay(mark, 0, [&](const FeedJournalRecord&, const std::byte*) { ++got; });
+        const int64_t t1 = nowNs();
+        Percentiles p;
+        p.p50 = p.p99 = p.p999 = p.max = p.mean = double(t1 - t0) / double(got ? got : 1);
+        p.samples = 1;
+        report("md.feed_journal_replay", p, 0, "mean per record replaying the last tenth of the journal");
+        reportValue("md.feed_journal_seek_fraction", "percent", 100.0 * double(j.bytesScanned()) / double(j.sizeBytes()),
+                    "of the journal read to replay its last tenth; a scan would be 100");
+        std::fprintf(stderr, "journal: %llu records, %llu bytes, replayed %llu reading %.1f%%\n",
+                     (unsigned long long)j.records(), (unsigned long long)j.sizeBytes(), (unsigned long long)got,
+                     100.0 * double(j.bytesScanned()) / double(j.sizeBytes()));
+        std::filesystem::remove_all(dir);
     }
 
     std::fprintf(stderr, "sink saw %llu frames\n", (unsigned long long)frames);

@@ -29,6 +29,7 @@
 #include "sip_sim.hpp"
 #include "blake3.h"
 #include <cstdio>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -55,9 +56,13 @@ static std::string hex(const std::array<uint8_t, 32>& h) {
     return s;
 }
 
-// Everything a decoder emitted, hashed and counted. The hash covers the frame bytes with the
-// fields a run is allowed to vary in masked out, so it is a statement about the decode and not
-// about when the test happened to run.
+// Everything a decoder emitted, hashed and counted.
+//
+// The hash skips the frame header's schemaVersion and covers everything else. That field moves on
+// every schema bump, including bumps with nothing to do with market data, and a golden that moves
+// then cannot tell a decoder change from a version stamp - which is the only question it exists to
+// answer. The version is recorded in the golden as its own field instead, so the bump is still
+// visible and still checked, and a changed hash means the decode changed.
 struct Sink {
     blake3_hasher h;
     uint64_t frames = 0;
@@ -72,7 +77,9 @@ struct Sink {
         ++byTemplate[f->templateId];
         if (f->flags & FrameFlags::endOfPacket) ++endOfPacket;
         const auto* p = reinterpret_cast<const std::byte*>(f);
-        blake3_hasher_update(&h, p, f->frameLength);
+        static_assert(offsetof(FrameHeader, schemaVersion) == 6);
+        blake3_hasher_update(&h, p, 6);
+        blake3_hasher_update(&h, p + 8, f->frameLength - 8);
         if (keepRaw) raw.insert(raw.end(), p, p + f->frameLength);
     }
     std::array<uint8_t, 32> digest() {
@@ -416,10 +423,10 @@ int main(int argc, char** argv) {
     {
         char buf[1024];
         std::snprintf(buf, sizeof buf,
-            "{\n  \"wireMessages\": %zu,\n  \"frames\": %llu,\n  \"deltas\": %llu,\n  \"trades\": %llu,\n"
-            "  \"statuses\": %llu,\n  \"imbalances\": %llu,\n  \"liveOrders\": %zu,\n  \"liveLevels\": %zu,\n"
-            "  \"decodedHash\": \"%s\"\n}\n",
-            wire.size(), (unsigned long long)sink.frames, (unsigned long long)dec.deltas(),
+            "{\n  \"schemaVersion\": %u,\n  \"wireMessages\": %zu,\n  \"frames\": %llu,\n  \"deltas\": %llu,\n"
+            "  \"trades\": %llu,\n  \"statuses\": %llu,\n  \"imbalances\": %llu,\n  \"liveOrders\": %zu,\n"
+            "  \"liveLevels\": %zu,\n  \"decodedHash\": \"%s\"\n}\n",
+            unsigned(SCHEMA_VERSION), wire.size(), (unsigned long long)sink.frames, (unsigned long long)dec.deltas(),
             (unsigned long long)dec.trades(), (unsigned long long)dec.statuses(),
             (unsigned long long)dec.imbalances(), dec.liveOrders(), dec.liveLevels(),
             hex(sink.digest()).c_str());
@@ -430,8 +437,8 @@ int main(int argc, char** argv) {
             if (!in) { std::printf("FAIL: no golden at %s (run with --write-golden)\n", golden.c_str()); return 1; }
             const std::string stored((std::istreambuf_iterator<char>(in)), {});
             int rc = 0;
-            for (const char* k : {"wireMessages", "frames", "deltas", "trades", "statuses", "imbalances",
-                                  "liveOrders", "liveLevels", "decodedHash"}) {
+            for (const char* k : {"schemaVersion", "wireMessages", "frames", "deltas", "trades", "statuses",
+                                  "imbalances", "liveOrders", "liveLevels", "decodedHash"}) {
                 const std::string a = jsonField(stored, k), b = jsonField(json, k);
                 if (a != b) { std::printf("FAIL: golden %s: %s stored=%s now=%s\n", golden.c_str(), k, a.c_str(), b.c_str()); rc = 1; }
             }

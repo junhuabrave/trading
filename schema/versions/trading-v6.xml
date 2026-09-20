@@ -20,7 +20,7 @@
     strings fixed char[N], null padded, ASCII, reference/cold path only
 -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
-    package="trading" id="1" version="7"
+    package="trading" id="1" version="6"
     semanticVersion="2026.09" description="Broker-dealer trading stack schema"
     byteOrder="littleEndian" headerType="FrameHeader">
   <types>
@@ -255,15 +255,6 @@
       <validValue name="Direct">1</validValue>
       <validValue name="Sip">2</validValue>
       <validValue name="Vendor">3</validValue>
-    </enum>
-    <enum name="MdSwitchReason" encodingType="uint8" description="why the source selector moved; carried in MdSourceSwitch.reason, which is frozen as uint8">
-      <validValue name="Initial">1</validValue>
-      <validValue name="SourceStale">2</validValue>
-      <validValue name="SourceDown">3</validValue>
-      <validValue name="SourceGapped">4</validValue>
-      <validValue name="Recovered">5</validValue>
-      <validValue name="NoSource">6</validValue>
-      <validValue name="Operator">7</validValue>
     </enum>
     <enum name="DivergenceKind" encodingType="uint8" description="how a direct feed's NBBO and the SIP's disagreed">
       <validValue name="Price">1</validValue>
@@ -610,7 +601,7 @@
     <field name="fromFeedId"     id="1" type="uint32"/>
     <field name="toFeedId"       id="2" type="uint32"/>
     <field name="quality"        id="3" type="MdQuality" description="what the engine now has"/>
-    <field name="reason"         id="4" type="uint8" description="an MdSwitchReason; the field is frozen as uint8 so the enum names the values rather than typing them"/>
+    <field name="reason"         id="4" type="uint8"/>
     <field name="pad"            id="5" type="uint8" length="6"/>
     <field name="switchTs"       id="6" type="Ts"/>
     <field name="pad2"           id="7" type="Pad8"/>
