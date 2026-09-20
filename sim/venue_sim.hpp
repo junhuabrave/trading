@@ -103,7 +103,19 @@ public:
 
 private:
     struct Session { bool up = true; int64_t windowTs = 0; uint32_t used = 0, openOrders = 0; uint64_t received = 0, delayed = 0; };
-    struct Arrival { ChildOrder child; int64_t arriveTs; uint64_t childSeq; bool operator>(const Arrival& o) const { return arriveTs > o.arriveTs; } };
+    // Ordered by arrival, then by the sequence the order was sent in. The tiebreak is not a
+    // nicety: a priority queue is not stable, so two children released at the same instant come out
+    // in whatever order the heap happens to hold them, and that order differs between standard
+    // libraries. One child per parent never produced a tie; a router that sweeps does, on every
+    // multi-venue plan. Sending order is also the right answer - a venue receives what a session
+    // sent it in the order it was sent.
+    struct Arrival {
+        ChildOrder child; int64_t arriveTs; uint64_t childSeq;
+        bool operator>(const Arrival& o) const {
+            if (arriveTs != o.arriveTs) return arriveTs > o.arriveTs;
+            return childSeq > o.childSeq;
+        }
+    };
     struct Rest {
         uint64_t childId, parentId; uint32_t accountIdx, symbolIdx; Side side; int64_t price, leaves, cum, queueAhead; uint16_t sessionIdx; uint8_t tif; uint64_t childSeq;
         BookSide bookSide() const { return side == Side::Buy ? BookSide::Bid : BookSide::Ask; }

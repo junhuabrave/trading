@@ -168,7 +168,10 @@ int main(int argc, char** argv) {
         o.body.clOrdId = uint64_t(step); o.body.orderId = (uint64_t(2) << 48) | uint64_t(++gwOrders);
         o.body.accountIdx = 42; o.body.symbolIdx = uint32_t(1 + rng() % NSYM);
         o.body.side = (rng() % 4 == 0) ? Side::SellShort : Side::Buy; o.body.ordType = OrdType::Limit; o.body.tif = Tif::Day;
-        o.body.qty = int64_t(100 * (1 + rng() % 10)) + ((rng() % 20 == 0) ? 7 : 0);   // some odd lots -> rejects
+        // Two draws, sequenced: the operands of + are evaluated in an unspecified order.
+        const int64_t lot = int64_t(100 * (1 + rng() % 10));
+        const int64_t odd = (rng() % 20 == 0) ? 7 : 0;
+        o.body.qty = lot + odd;                                                      // some odd lots -> rejects
         o.body.price = liveRd.refPrice(o.body.symbolIdx); o.body.locateId = (rng() & 1) ? 1 : 0;
         while (!core.submit(&o.header)) liveDrain();
         // the engine polls in an arbitrary order: sometimes md first, sometimes core first

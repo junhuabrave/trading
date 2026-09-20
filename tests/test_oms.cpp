@@ -220,7 +220,12 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 20000; ++i) {
         uint32_t roll = uint32_t(rng() % 100);
         if ((roll < 40 && live.size() < 1500) || live.empty()) {
-            uint64_t o = d.newOrder(uint32_t(1 + rng() % 10), (rng() & 1) ? Side::Buy : Side::Sell, int64_t(100 * (1 + rng() % 10)), px);
+            // One draw per statement: argument evaluation order is unspecified, so several rng() calls
+        // in one argument list make the run depend on the compiler.
+        const uint32_t sym = uint32_t(1 + rng() % 10);
+        const Side side = (rng() & 1) ? Side::Buy : Side::Sell;
+        const int64_t qty = int64_t(100 * (1 + rng() % 10));
+        uint64_t o = d.newOrder(sym, side, qty, px);
             if (rng() % 10 == 0) { d.risk(o, false, uint16_t(Reason::MaxOrderQty)); continue; }
             d.risk(o, true); uint64_t c = d.child(o, oms.find(o)->leaves, px, uint16_t(rng() % 3)); d.ack(c); live.push_back({o, c});
         } else {

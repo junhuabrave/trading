@@ -113,6 +113,29 @@ report). End to end wire-to-wire waits for the gateways. `tools/bench.py` compar
 grow, and p99.9 is gated only when the baseline was recorded with `--pinned` on a quiet host,
 because on a laptop it is scheduler noise. Baselines move only by a reviewed commit.
 
+### Determinism across implementations
+
+Replay determinism is checked within one build: the cold replay recomputes every decision and
+compares. What that cannot catch is a program whose answer depends on the standard library or the
+compiler, and two kinds of that have been found here, both by CI building the same commit with
+gcc and with clang and getting different baselines.
+
+The first is an ordering that is not total. `std::priority_queue` is not stable, so two venue
+arrivals with the same timestamp came out in whichever order the heap happened to hold them, which
+is not the same order in libstdc++ and libc++. It stayed hidden while the stub router sent one
+child per parent, because one child never ties with another; the first sweep across venues produced
+the tie on its first multi-venue plan. Any comparator used for ordering has to be total, and the
+tiebreak has to mean something — here it is the sequence the order was sent in.
+
+The second is drawing randomness more than once in a single expression. The order in which a
+compiler evaluates function arguments, or the operands of `+`, is unspecified, so `f(rng(), rng())`
+consumes the generator in an order that differs between compilers. Nothing is undefined and no
+sanitizer objects; the run is simply not reproducible. Every draw gets its own statement.
+
+Both are the reason CI builds every commit twice, with different compilers and different standard
+libraries, and compares against the same stored baselines. That is the guard, and it is the only
+one that works for this class.
+
 ## The simulator
 
 `run_sim` runs a scenario (random flow with a seed, adversarial flow, or a scripted event log made by

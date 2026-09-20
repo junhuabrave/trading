@@ -228,7 +228,12 @@ int main(int argc, char** argv) {
     for (int i = 0; i < N; ++i) {
         uint32_t sym = uint32_t(1 + rng() % 10); int64_t ref = rd.refPrice(sym);
         int64_t px = ref + (int64_t(rng() % 200) - 100) * 1'000'000;
-        NewOrder o = h.mk(500, sym, (rng() % 5 == 0) ? Side::SellShort : (rng() & 1 ? Side::Buy : Side::Sell), int64_t(1 + rng() % 500) * 10, px);
+        // Drawn into locals first. The order in which a compiler evaluates function arguments is
+        // unspecified, so two rng() calls in one argument list consume the sequence in an order
+        // that differs between compilers - which is how this run stopped being reproducible.
+        const Side side = (rng() % 5 == 0) ? Side::SellShort : (rng() & 1 ? Side::Buy : Side::Sell);
+        const int64_t qty = int64_t(1 + rng() % 500) * 10;
+        NewOrder o = h.mk(500, sym, side, qty, px);
         if (rng() % 7 == 0) o.price += 3;  // off-tick
         if (h.order(o, &oid) == Reason::NoReason) { live.push_back(oid); ++acc; }
         if (rng() % 5 == 0 && !live.empty()) {
