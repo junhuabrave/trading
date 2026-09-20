@@ -158,71 +158,102 @@ int main(int argc, char** argv) {
     }
 
     // ---- 3, 4 and 5: readers that never block the writer, and never see half a record
+    auto writeBurst = [&](size_t n) {
+        const int64_t t0 = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        Frame<BookDelta> d;
+        int64_t now = MIDNIGHT;
+        for (size_t i = 0; i < n; ++i) {
+            d.init(); d.header.streamId = FEED_ITCH;
+            d.body.symbolIdx = uint32_t(1 + i % MAXSYM); d.body.venueId = VENUE_XNAS;
+            d.body.side = (i & 1) ? BookSide::Bid : BookSide::Ask;
+            const int64_t ref = rd.refPrice(d.body.symbolIdx);
+            d.body.price = d.body.side == BookSide::Bid ? ref - 1'000'000 * int64_t(1 + i % 8)
+                                                       : ref + 1'000'000 * int64_t(1 + i % 8);
+            d.body.qty = int64_t(100 + (i % 20) * 100);
+            d.body.orderCount = 1 + uint32_t(i % 5);
+            d.body.venueSeq = 9'000'000 + i;
+            d.body.venueTs = now;
+            book.apply(&d.header, now, [](const FrameHeader*) {});
+            now += 100;
+        }
+        const int64_t t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return double(t1 - t0) / 1e6;                                  // milliseconds for the burst
+    };
     {
+        // Readers going as fast as they can: what this proves is that none of them ever sees half
+        // a record. The rate they manage, and the writer's cost beside them, are facts about the
+        // machine - core count, cache topology, what else is running - so they are printed and not
+        // asserted. A test that gates on them is testing the host.
         std::atomic<bool> stop{false};
         std::atomic<uint64_t> reads{0}, retries{0}, torn{0}, crossed{0};
-        auto readerLoop = [&]() {
+        auto fastReader = [&]() {
             BookReader r(seg.base(), MAXSYM, MAXVENUE);
             TopBody t{};
             while (!stop.load(std::memory_order_relaxed)) {
                 for (uint32_t s = 1; s <= MAXSYM; ++s) {
                     if (!r.top(s, t)) { ++retries; continue; }
                     ++reads;
-                    if (t.checksum != topChecksum(t)) ++torn;     // the sequence number missed one
+                    if (t.checksum != topChecksum(t)) ++torn;         // the sequence number missed one
                     if (t.bid && t.ask && t.bid >= t.ask) ++crossed;
                 }
             }
         };
-        // What the writer costs with nobody reading.
-        auto writeBurst = [&](size_t n) {
-            const int64_t t0 = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            Frame<BookDelta> d;
-            int64_t now = MIDNIGHT;
-            for (size_t i = 0; i < n; ++i) {
-                d.init(); d.header.streamId = FEED_ITCH;
-                d.body.symbolIdx = uint32_t(1 + i % MAXSYM); d.body.venueId = VENUE_XNAS;
-                d.body.side = (i & 1) ? BookSide::Bid : BookSide::Ask;
-                const int64_t ref = rd.refPrice(d.body.symbolIdx);
-                d.body.price = d.body.side == BookSide::Bid ? ref - 1'000'000 * int64_t(1 + i % 8)
-                                                           : ref + 1'000'000 * int64_t(1 + i % 8);
-                d.body.qty = int64_t(100 + (i % 20) * 100);
-                d.body.orderCount = 1 + uint32_t(i % 5);
-                d.body.venueSeq = 9'000'000 + i;
-                d.body.venueTs = now;
-                book.apply(&d.header, now, [](const FrameHeader*) {});
-                now += 100;
-            }
-            const int64_t t1 = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            return double(t1 - t0) / double(n);
-        };
         const size_t N = 1'000'000;
-        writeBurst(N / 10);                                        // warm
+        writeBurst(N / 10);                                            // warm
         const double alone = writeBurst(N);
         std::vector<std::thread> readers;
-        for (int i = 0; i < 3; ++i) readers.emplace_back(readerLoop);
-        const double withReaders = writeBurst(N);
+        for (int i = 0; i < 3; ++i) readers.emplace_back(fastReader);
+        const double busy = writeBurst(N);
         stop.store(true);
         for (auto& th : readers) th.join();
-        std::printf("seqlock: writer %.1f ns/update alone, %.1f ns with three readers (%.0f%%); "
-                    "%llu reads, %llu retries, %llu torn, %llu crossed\n",
-                    alone, withReaders, 100.0 * withReaders / alone,
-                    (unsigned long long)reads.load(), (unsigned long long)retries.load(),
+        std::printf("seqlock: writer %.1f ms for a million updates alone, %.1f ms with three readers; "
+                    "%llu reads, %llu gave up and retried, %llu torn, %llu crossed\n",
+                    alone, busy, (unsigned long long)reads.load(), (unsigned long long)retries.load(),
                     (unsigned long long)torn.load(), (unsigned long long)crossed.load());
-        CHECK(reads.load() > 100'000);                             // the readers really ran
-        CHECK(torn.load() == 0);                                   // and never saw half a record
+        CHECK(reads.load() > 100'000);                                 // the readers really ran
+        CHECK(torn.load() == 0);                                       // and never saw half a record
         CHECK(crossed.load() == 0);
-        // Two things make "never blocks" a statement rather than a hope. Structurally there is no
-        // wait in the writer at all: it stores an odd number, writes, stores an even one. What the
-        // measurement adds is that the cost does not run away - the slowdown here is three cores
-        // pulling the writer's cache lines out from under it on every store, which is memory
-        // traffic and a bounded constant. A writer waiting on a lock a reader held would not be a
-        // constant, and its tail would be in microseconds rather than nanoseconds.
-        CHECK(withReaders < alone * 4.0);
-        // And the readers are not starved either: a retry happens only when one catches the writer
-        // mid-record, and it is a rounding error against the reads that succeeded first time.
-        CHECK(retries.load() * 100 < reads.load());
+    }
+    {
+        // And the part that is a property of the design rather than of the machine. These readers
+        // stop in the middle of a read - between taking the sequence number and checking it again -
+        // and stay there for ten milliseconds. That is exactly where a lock-based reader would be
+        // holding the lock. Two of them, ten times each, is two hundred milliseconds during which a
+        // writer that waited for readers would be waiting; this one does not wait at all, so its
+        // burst finishes in the time the burst takes.
+        constexpr int kReaders = 2, kRounds = 10, kSleepMs = 10;
+        std::atomic<uint64_t> slowReads{0}, slowTorn{0};
+        std::atomic<int> parked{0};
+        auto slowReader = [&]() {
+            const TopOfBook& t = book.reader().tops()[1];
+            for (int i = 0; i < kRounds; ++i) {
+                TopBody body{};
+                const uint32_t s1 = t.seq.load(std::memory_order_acquire);
+                std::memcpy(&body, &t.body, sizeof(TopBody));
+                parked.fetch_add(1, std::memory_order_release);
+                std::this_thread::sleep_for(std::chrono::milliseconds(kSleepMs));
+                std::atomic_thread_fence(std::memory_order_acquire);
+                if (t.seq.load(std::memory_order_relaxed) == s1 && !(s1 & 1u)) {
+                    ++slowReads;
+                    if (body.checksum != topChecksum(body)) ++slowTorn;
+                }
+            }
+        };
+        std::vector<std::thread> slow;
+        for (int i = 0; i < kReaders; ++i) slow.emplace_back(slowReader);
+        while (parked.load(std::memory_order_acquire) == 0) std::this_thread::yield();
+        const double busy = writeBurst(200'000);
+        for (auto& th : slow) th.join();
+        const double parkedMs = double(kReaders) * kRounds * kSleepMs;
+        std::printf("a reader parked mid-read for %.0f ms in total: the writer's burst still took "
+                    "%.1f ms, and %llu of those reads came back consistent\n",
+                    parkedMs, busy, (unsigned long long)slowReads.load());
+        CHECK(slowTorn.load() == 0);
+        // A writer serialised behind even one of those readers could not have finished in less than
+        // that reader's own parked time. The margin here is wide enough to survive any host.
+        CHECK(busy < parkedMs / 4.0);
     }
 
     // ---- 6: another process's view of the same segment
