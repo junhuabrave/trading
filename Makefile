@@ -3,12 +3,12 @@ CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra -Werror -pedantic
 B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DBLAKE3_USE_NEON=0
-INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Icore/md -Isim -Ithird_party/blake3
+INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Icore/md -Icore/router -Isim -Ithird_party/blake3
 B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
 .PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines goldens
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/test_book build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/test_book build/test_router build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/bench_router
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -43,7 +43,7 @@ build/bench_seq: tests/bench_seq.cpp core/seq/*.hpp gen/cpp/trading.hpp | build
 build/test_risk: tests/test_risk.cpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
-build/run_sim: sim/run_sim.cpp sim/*.hpp core/md/*.hpp core/oms/*.hpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/run_sim: sim/run_sim.cpp sim/*.hpp core/md/*.hpp core/router/*.hpp core/oms/*.hpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/test_md: tests/test_md.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed_sim.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -61,6 +61,9 @@ build/test_selector: tests/test_selector.cpp core/md/*.hpp sim/itch_sim.hpp core
 build/test_book: tests/test_book.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@ -lpthread
 
+build/test_router: tests/test_router.cpp core/router/*.hpp core/md/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
@@ -68,6 +71,9 @@ build/bench_md: tests/bench_md.cpp core/md/*.hpp core/util/*.hpp gen/cpp/trading
 	$(CXX) $(CXXFLAGS) $(INC) $< -o $@
 
 build/bench_decode: tests/bench_decode.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
+
+build/bench_router: tests/bench_router.cpp core/router/*.hpp core/md/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/bench_oms: tests/bench_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -118,6 +124,8 @@ test: check all build/refdata-diff.log
 	./build/test_selector build/refdata-20260915-v1.bin build/seltest
 	@echo "== book builder: invariants under a recorded day, and readers that never block the writer"
 	./build/test_book build/refdata-20260915-v1.bin build/booktest
+	@echo "== router: the cost model on worked examples, and named market shapes with a right answer"
+	./build/test_router build/refdata-20260915-v1.bin build/routertest
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
@@ -132,7 +140,7 @@ test: check all build/refdata-diff.log
 # Benchmarks: every binary prints JSON rows; tools/bench.py collects, compares to
 # bench/baselines/<host-class>.json. `bench` is informational, `benchgate` fails on regression
 # (use on a pinned host), `bench-baseline` records a new baseline after a reviewed change.
-BENCH_BINS = build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/run_sim
+BENCH_BINS = build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/bench_router build/run_sim
 bench: $(BENCH_BINS) build/refdata-20260915-v1.bin
 	python3 tools/bench.py run
 benchgate: $(BENCH_BINS) build/refdata-20260915-v1.bin

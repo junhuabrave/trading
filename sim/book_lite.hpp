@@ -1,5 +1,9 @@
-// sim/book_lite.hpp : per-symbol, single-venue price-level book for the simulator and the
-// stub router. The real book builder (core/md, v0.3) replaces this with flat ladders.
+// sim/book_lite.hpp : per-symbol, single-venue price-level book for the venue simulator.
+//
+// The engine and the router no longer use this: they read core/md/book.hpp's flat ladders through
+// the shared view, which is what production does. What is left for it is the venue simulator's own
+// side of the market - the book a venue keeps of the orders resting on it - where a std::map of
+// price to quantity is the clearest thing to read and nothing is on a hot path.
 #pragma once
 #include "trading.hpp"
 #include <map>

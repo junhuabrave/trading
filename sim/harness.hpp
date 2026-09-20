@@ -11,7 +11,7 @@
 #include "oms.hpp"
 #include "identity.hpp"
 #include "venue_sim.hpp"
-#include "stub_router.hpp"
+#include "router.hpp"
 #include "md_stack.hpp"
 #include "client_sim.hpp"
 #include <deque>
@@ -56,9 +56,17 @@ inline std::string hex(const std::array<uint8_t, 32>& h, size_t n = 32) { std::s
 class Engine {
 public:
     enum class Mode { Live, Verify };
+    static constexpr uint32_t BOOK_MAX_VENUE = 9;          // the fixture's venues, internal included
+
     Engine(const Snapshot& snap, uint32_t sessions, Mode mode, const Journal* mdJournal = nullptr, uint16_t sourceId = 3)
-        : mode_(mode), src_(sourceId), risk_(rd_), oms_(4, 1 << 18), router_(2, sessions), book_(snap.instruments().size() + 1), mdJournal_(mdJournal) {
+        : mode_(mode), src_(sourceId), risk_(rd_), oms_(4, 1 << 18),
+          bookMem_(md::BookSegment::bytesFor(uint32_t(snap.instruments().size()) + 1, BOOK_MAX_VENUE)),
+          book_(rd_, bookParams(snap), bookMem_.data()),
+          bookReader_(bookMem_.data(), uint32_t(snap.instruments().size()) + 1, BOOK_MAX_VENUE),
+          router_(snap, routerParams(sessions)),
+          mdJournal_(mdJournal) {
         rd_.load(snap); risk_.load(snap); oms_.load(snap); std::memcpy(snapHash_.data(), snap.contentHash().data(), 32);
+        router_.setBook(&bookReader_);
     }
 
     // Verify mode: md target per cause seq, pre-scanned from the journal, so a decision is
@@ -67,8 +75,12 @@ public:
 
     // ----- inputs
     void onMd(const FrameHeader* f) {
-        if (auto* d = as<BookDelta>(f)) book_.apply(*d);
-        else if (auto* n = as<Nbbo>(f)) oms_.onNbbo(*n);   // the NBBO on every client report
+        // The engine keeps its own book, built from the sequenced stream. Not because the book
+        // builder's shared view is unavailable - in production the router reads exactly that - but
+        // because a replay has to reconstruct the book the live engine saw from the journal alone,
+        // and the only way to be sure it did is to build it the same way both times.
+        book_.apply(f, 0, [](const FrameHeader*) {});
+        if (auto* n = as<Nbbo>(f)) oms_.onNbbo(*n);        // the NBBO on every client report
         risk_.apply(f);                                     // Trade and Nbbo feed reference prices and the SSR bid
         md::Identity id = md::identity(f);
         if (id.venueSeq == 0) ++unidentified_;              // a market-data frame nothing can replay to
@@ -122,7 +134,7 @@ public:
         oms_.hashInto(h); router_.hashInto(h);
         std::array<uint8_t, 32> out{}; blake3_hasher_finalize(&h, out.data(), 32); return out;
     }
-    const RiskEngine& risk() const { return risk_; } const oms::Oms& oms() const { return oms_; } const StubRouter& router() const { return router_; }
+    const RiskEngine& risk() const { return risk_; } const oms::Oms& oms() const { return oms_; } const router::Router& router() const { return router_; }
     uint64_t checkpoints() const { return checkpoints_; }
     uint64_t verified() const { return verified_; } uint64_t mismatches() const { return mismatches_; }
     uint64_t unidentified() const { return unidentified_; }
@@ -153,15 +165,42 @@ private:
         n = NewOrder{}; n.orderId = o->orderId; n.clOrdId = o->clOrdId; n.accountIdx = o->accountIdx; n.symbolIdx = o->symbolIdx; n.side = o->side;
         n.ordType = o->ordType; n.tif = o->tif; n.orderFlags = o->orderFlags; n.qty = o->leaves; n.price = o->price; n.displayQty = o->displayQty; return true;
     }
+    // RouteDecision records up to eight venues and the first four quantities; the ChildOrder frames
+    // beside it in the same atomic batch carry every child in full. The decision is the summary and
+    // the reason, the children are the record, and the batch is what keeps them together.
+    static void fillDecision(const NewOrder& o, const router::Plan& p, RouteDecision& rt) {
+        rt.parentOrderId = o.orderId;
+        rt.strategyTag = p.strategyTag;
+        rt.childCount = p.count;
+        for (uint8_t i = 0; i < p.count && i < 8; ++i) rt.venueIds[i] = p.children[i].venueId;
+        for (uint8_t i = 0; i < p.count && i < 4; ++i) rt.qtys[i] = p.children[i].qty;
+        rt.expectedCost = p.expectedCost;
+        rt.rejectedAltCost = p.rejectedAltCost;
+        rt.rejectedAltVenue = p.rejectedAltVenue;
+        rt.reason = p.reason;
+    }
+    void fillChild(const NewOrder& o, const router::Child& rc, ChildOrder& c, uint64_t childId, int64_t at) const {
+        c.childOrderId = childId; c.parentOrderId = o.orderId; c.accountIdx = o.accountIdx; c.symbolIdx = o.symbolIdx;
+        c.venueId = rc.venueId; c.venueSessionIdx = rc.venueSessionIdx;
+        c.side = o.side; c.ordType = rc.ordType; c.tif = rc.tif;
+        c.orderFlags = rc.orderFlags; c.strategyTag = rc.strategyTag;
+        c.qty = rc.qty; c.price = rc.price; c.displayQty = rc.displayQty;
+        c.releaseTs = at + rc.releaseOffsetNs;              // the slowest venue sets the clock
+    }
     void routeLive(const FrameHeader* f, uint64_t orderId) {
         NewOrder o; if (!routeInput(oms_.find(orderId), o)) return;
-        StubRouter::Plan p = router_.plan(o, book_); router_.placed(p);
+        router::Plan p;
+        router_.plan(o, o.qty, f->seqTs, p);                // false means no children, which the OMS reads as a decline
+        router_.placed(p);
         Frame<RouteDecision> rt; rt.init(); rt.header.sourceId = src_;
-        rt.body.parentOrderId = o.orderId; rt.body.strategyTag = 1; rt.body.childCount = 1; rt.body.venueIds[0] = p.venueId; rt.body.qtys[0] = o.qty;
-        rt.body.expectedCost = p.expectedCost; rt.body.rejectedAltVenue = 0; rt.body.rejectedAltCost = 0;
-        Frame<ChildOrder> c; c.init(); c.header.sourceId = src_;
-        router_.fillChild(o, p, c.body, (uint64_t(src_) << 48) | ++childCounter_);
-        emitWatermarks(f->seq); emit(&rt.header, f->seq, false); emit(&c.header, f->seq, false);
+        fillDecision(o, p, rt.body);
+        emitWatermarks(f->seq);
+        emit(&rt.header, f->seq, false);
+        for (uint8_t i = 0; i < p.count; ++i) {
+            Frame<ChildOrder> c; c.init(); c.header.sourceId = src_;
+            fillChild(o, p.children[i], c.body, (uint64_t(src_) << 48) | ++childCounter_, f->seqTs);
+            emit(&c.header, f->seq, false);
+        }
     }
     void onCheckpoint(const FrameHeader* f) {
         auto h = hash(); ++checkpoints_;
@@ -211,7 +250,10 @@ private:
     void routeVerify(const FrameHeader* f, uint64_t orderId) {
         NewOrder o; if (!routeInput(oms_.find(orderId), o)) return;
         pullTo(f->seq);                                        // the book as the live engine saw it when it planned
-        StubRouter::Plan p = router_.plan(o, book_); router_.placed(p); plans_[f->seq] = p;
+        router::Plan p;
+        router_.plan(o, o.qty, f->seqTs, p);
+        router_.placed(p);
+        plans_[f->seq] = PlannedRoute{p, 0};
     }
     // Every frame the live OMS sequenced must be exactly what this OMS produced from the same inputs,
     // in the same order: the dispute drill (regenerate the day's client reports) runs on every scenario.
@@ -229,18 +271,38 @@ private:
         auto it = std::lower_bound(wmIndex_->begin(), wmIndex_->end(), std::make_pair(causeSeq, uint64_t(0)));
         if (it != wmIndex_->end() && it->first == causeSeq) pullToVenueSeq(FEED_XNAS_ITCH, it->second);
     }
+    // The plan the replay computed must be the plan the live engine sequenced, field for field.
+    // Anything less than that - comparing only a cost, or only the first venue - would pass a
+    // router that had quietly changed where it sent the second child.
     void verifyRoute(const FrameHeader* f, const RouteDecision& rt) {
         ++verified_;
         auto it = plans_.find(f->causeSeq);
         if (it == plans_.end()) { note("RouteDecision with no plan at cause " + std::to_string(f->causeSeq)); return; }
-        if (it->second.expectedCost != rt.expectedCost || it->second.venueId != rt.venueIds[0]) note("RouteDecision cost mismatch for parent " + std::to_string(rt.parentOrderId));
+        const router::Plan& p = it->second.p;
+        auto bad = [&](const char* what) {
+            note(std::string("RouteDecision ") + what + " for parent " + std::to_string(rt.parentOrderId)
+                 + " (cause " + std::to_string(f->causeSeq) + ")");
+        };
+        if (p.count != rt.childCount) bad("child count");
+        else if (p.expectedCost != rt.expectedCost) bad("expected cost");
+        else if (p.rejectedAltCost != rt.rejectedAltCost || p.rejectedAltVenue != rt.rejectedAltVenue) bad("rejected alternative");
+        else if (p.reason != rt.reason) bad("reason");
+        else if (p.strategyTag != rt.strategyTag) bad("strategy");
+        else for (uint8_t i = 0; i < p.count && i < 8; ++i)
+            if (p.children[i].venueId != rt.venueIds[i]) { bad("venue order"); break; }
+        if (rt.childCount == 0) plans_.erase(it);           // a declined plan has no children to match
     }
     void verifyChild(const FrameHeader* f, const ChildOrder& c) {
         ++verified_;
         auto it = plans_.find(f->causeSeq);
         if (it == plans_.end()) { note("ChildOrder with no plan at cause " + std::to_string(f->causeSeq)); return; }
-        if (c.venueSessionIdx != it->second.sessionIdx) note("ChildOrder session placement mismatch at cause " + std::to_string(f->causeSeq));
-        plans_.erase(it);
+        PlannedRoute& pr = it->second;
+        if (pr.seen >= pr.p.count) { note("ChildOrder beyond the plan at cause " + std::to_string(f->causeSeq)); return; }
+        const router::Child& e = pr.p.children[pr.seen++];
+        if (c.venueId != e.venueId || c.venueSessionIdx != e.venueSessionIdx || c.qty != e.qty
+            || c.price != e.price || c.tif != e.tif || c.orderFlags != e.orderFlags)
+            note("ChildOrder " + std::to_string(pr.seen - 1) + " differs from the plan at cause " + std::to_string(f->causeSeq));
+        if (pr.seen >= pr.p.count) plans_.erase(it);
     }
     void verifyAck(const CheckpointAck& a) {
         ++verified_;
@@ -252,13 +314,29 @@ private:
     }
 
     Mode mode_; uint16_t src_;
-    RefData rd_; RiskEngine risk_; oms::Oms oms_; StubRouter router_; BookLite book_; WatermarkTracker wm_;
+    static md::BookBuilder::Params bookParams(const Snapshot& snap) {
+        md::BookBuilder::Params b{};
+        b.sourceId = 3; b.feedId = FEED_XNAS_ITCH;
+        b.maxSymbolIdx = uint32_t(snap.instruments().size()) + 1;
+        b.maxVenueId = BOOK_MAX_VENUE;
+        return b;
+    }
+    static router::Router::Params routerParams(uint32_t sessions) {
+        router::Router::Params r{};
+        r.sourceId = 3; r.maxVenueId = 4; r.sessionsPerVenue = uint16_t(sessions);
+        return r;
+    }
+
+    RefData rd_; RiskEngine risk_; oms::Oms oms_;
+    std::vector<std::byte> bookMem_; md::BookBuilder book_; md::BookReader bookReader_;
+    router::Router router_; WatermarkTracker wm_;
     std::deque<std::vector<std::byte>> omsExpected_;
     const Journal* mdJournal_; uint64_t mdCursor_ = 0; const std::vector<std::pair<uint64_t, uint64_t>>* wmIndex_ = nullptr;
     std::array<uint8_t, 32> snapHash_{};
     NewOrder lastOrder_{}; ReplaceOrder lastReplace_{}; FrameHeader lastHdr_{}; bool lastIsReplace_ = false;
     struct Expected { RiskDecision d; bool replace; };
-    std::map<uint64_t, Expected> expected_; std::map<uint64_t, StubRouter::Plan> plans_;   // keyed by cause seq (verify only)
+    struct PlannedRoute { router::Plan p; uint8_t seen; };
+    std::map<uint64_t, Expected> expected_; std::map<uint64_t, PlannedRoute> plans_;   // keyed by cause seq (verify only)
     std::deque<Batch> pending_;
     std::vector<std::pair<uint64_t, std::array<uint8_t, 32>>> expectedAcks_;
     uint64_t childCounter_ = 0, checkpoints_ = 0, verified_ = 0, mismatches_ = 0, unidentified_ = 0; std::string firstMismatch_;
@@ -360,7 +438,7 @@ public:
         s.fills = eng.oms().fills(); s.cancelled = eng.oms().cancelled(); s.venueRejects = eng.oms().venueRejected(); s.children = eng.router().children();
         s.checkpoints = eng.checkpoints(); s.coreSeq = core.lastSeq(); s.mdSeq = md.lastSeq(); s.delayed = venue.delayed();
         for (const auto& e : venue.dropCopy()) if (e.execType == ExecType::Fill || e.execType == ExecType::PartialFill) ++s.dropCopyFills;
-        s.placed = eng.router().placed(); s.finalHash = eng.hash(); s.maxRingLag = maxLag; s.unidentifiedMd = eng.unidentified();
+        s.placed = eng.router().placements(2); s.finalHash = eng.hash(); s.maxRingLag = maxLag; s.unidentifiedMd = eng.unidentified();
         liveStats_ = s; return s;
     }
 
