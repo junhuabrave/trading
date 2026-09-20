@@ -279,6 +279,48 @@ int main(int argc, char** argv) {
         CHECK(j.lastSeq() == 9);                                     // nothing was journaled that the ring refused
         std::printf("back-pressure: ring of 8 accepted 8, refused 12, journal seq=%llu\n", (unsigned long long)j.lastSeq());
     }
+    // ---- timers, which are messages
+    //
+    // A strategy that rests and crosses after a while is waiting on a clock, and a clock is the one
+    // thing a replay cannot reproduce. So the wait is armed here and fires as an ordinary sequenced
+    // frame: replay reads when it went off instead of having to work it out, and the position in
+    // the stream is the same both times.
+    {
+        std::string dir = std::string(argv[2]) + "/timers";
+        fs::remove_all(dir);
+        Journal j(dir, 0, 1);
+        BroadcastRing ring(1 << 10);
+        FakeClock clock;
+        Sequencer s(0, 1, j, ring, clock, 0);
+        clock.t = 1'000;
+        CHECK(s.fireTimers(clock.t) == 0);                  // nothing armed, nothing fired
+        // armed out of order and with a tie, which is where an unstable order would show
+        s.armTimer(7, 300, 3'000);
+        s.armTimer(7, 100, 1'000);
+        s.armTimer(7, 200, 2'000);
+        s.armTimer(9, 150, 1'000);                          // the same instant as timer 100
+        CHECK(s.armedTimers() == 4);
+        CHECK(s.fireTimers(500) == 0);                      // none due yet
+        CHECK(s.armedTimers() == 4);
+        const uint64_t before = j.lastSeq();
+        CHECK(s.fireTimers(2'000) == 3);                    // the two at 1000 and the one at 2000
+        CHECK(s.armedTimers() == 1);
+        std::vector<std::pair<uint32_t, int64_t>> fired;
+        j.replay(before + 1, 0, [&](const FrameHeader* f) {
+            if (const auto* t = as<Timer>(f)) fired.emplace_back(t->timerId, t->fireTs);
+        });
+        CHECK(fired.size() == 3);
+        // earliest first, and the tie broken by id so two runs produce one order
+        CHECK(fired[0] == std::make_pair(uint32_t(100), int64_t(1'000)));
+        CHECK(fired[1] == std::make_pair(uint32_t(150), int64_t(1'000)));
+        CHECK(fired[2] == std::make_pair(uint32_t(200), int64_t(2'000)));
+        CHECK(s.fireTimers(10'000) == 1);
+        CHECK(s.armedTimers() == 0);
+        CHECK(s.fireTimers(10'000) == 0);                   // and a fired timer does not fire again
+        std::printf("timers: four armed, fired earliest first with the tie broken by id, "
+                    "all four on the journal\n");
+    }
+
     std::printf("sequencer tests ok\n");
     return 0;
 }

@@ -9,7 +9,9 @@
 #include "journal.hpp"
 #include "ring.hpp"
 #include "clock.hpp"
+#include <algorithm>
 #include <span>
+#include <vector>
 #include <array>
 
 namespace trading::seq {
@@ -70,6 +72,33 @@ public:
         return f.header.seq;
     }
 
+    // Arm a timer. Nothing fires it by itself: fireTimers() emits the due ones as ordinary
+    // sequenced frames, so a strategy waiting on a clock leaves the same mark on the log as
+    // anything else and a replay reads it back instead of having to re-derive when it would have
+    // gone off. That is the whole reason the timer is a message.
+    void armTimer(uint16_t strategyId, uint32_t timerId, int64_t fireTs) {
+        timers_.push_back({fireTs, timerId, strategyId});
+    }
+    // Emit every timer due at `now`, earliest first, ties broken by id so the order is total.
+    uint32_t fireTimers(int64_t now) {
+        if (timers_.empty()) return 0;
+        std::sort(timers_.begin(), timers_.end());
+        uint32_t fired = 0;
+        size_t i = 0;
+        for (; i < timers_.size() && timers_[i].fireTs <= now; ++i) {
+            Frame<Timer> f; f.init();
+            f.header.sourceId = sourceId_;
+            f.body.strategyId = timers_[i].strategyId;
+            f.body.timerId = timers_[i].timerId;
+            f.body.fireTs = timers_[i].fireTs;
+            while (!submit(&f.header)) {}
+            ++fired;
+        }
+        timers_.erase(timers_.begin(), timers_.begin() + long(i));
+        return fired;
+    }
+    size_t armedTimers() const noexcept { return timers_.size(); }
+
     uint64_t heartbeat(ComponentState state) {
         Frame<Heartbeat> f; f.init();
         f.body.componentSeq = lastSeq(); f.body.state = state; f.header.sourceId = sourceId_;
@@ -89,6 +118,15 @@ private:
     void maybeCheckpoint() {
         if (checkpointEvery_ && sinceCheckpoint_ >= checkpointEvery_) { sinceCheckpoint_ = 0; checkpoint(); }
     }
+
+    struct Armed {
+        int64_t fireTs; uint32_t timerId; uint16_t strategyId;
+        bool operator<(const Armed& o) const noexcept {
+            if (fireTs != o.fireTs) return fireTs < o.fireTs;
+            return timerId < o.timerId;                      // total, so two runs fire in one order
+        }
+    };
+    std::vector<Armed> timers_;
 
     uint32_t streamId_; uint16_t sourceId_;
     Journal& journal_; BroadcastRing& ring_; Clock& clock_;

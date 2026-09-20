@@ -11,6 +11,9 @@ VENUES = [
     {"venueId": 2, "mic": "XNAS", "name": "Nasdaq", "venueType": "Exchange", "protocol": 1, "sessionIds": [201, 202, 203], "oneWayLatencyNs": 12000},
     {"venueId": 3, "mic": "BATS", "name": "Cboe BZX", "venueType": "Exchange", "protocol": 3, "sessionIds": [301], "oneWayLatencyNs": 21000},
     {"venueId": 4, "mic": "IEXG", "name": "IEX", "venueType": "Exchange", "protocol": 9, "sessionIds": [401], "oneWayLatencyNs": 25000},
+    # An alternative trading system: no displayed quote, midpoint executions only. The router needs
+    # one to have anything to mean by "dark", and the client's allowDark flag needs something to deny.
+    {"venueId": 5, "mic": "DARK", "name": "Dark Pool ATS", "venueType": "Ats", "protocol": 5, "sessionIds": [501], "oneWayLatencyNs": 30000},
     {"venueId": 9, "mic": "INTL", "name": "Internal", "venueType": "Internal", "protocol": 0, "sessionIds": [], "oneWayLatencyNs": 0},
 ]
 # One record per logical feed. Two publishers of the same feed share a feedId; that shared identity
@@ -76,7 +79,7 @@ def fixture(day):
     inst = instruments(day)
     listings = []
     for i in inst:
-        for v in (1, 2, 3, 4):
+        for v in (1, 2, 3, 4, 5):
             listings.append({"symbolIdx": i["symbolIdx"], "venueId": v, "venueSymbol": i["ticker"], "tradable": i.get("status") != "Delisted"})
     lists = {"etb": [1, 2, 3, 4, 5, 6, 8, 10], "htb": [7, 9], "restricted": [], "threshold": [7], "watch": []}
     if day == 2:
@@ -89,7 +92,7 @@ def fixture(day):
                    "payDate": 20260915, "ratioNum": 4, "ratioDen": 1, "applied": True})
         ca.append({"actionId": 5002, "symbolIdx": 9, "actionType": "Delist", "exDate": 20260916, "applied": True})
     fees = [{"venueId": v, "feeCode": c, "liquidity": liq, "feePerShare": fee, "effectiveDate": 20260901}
-            for v in (1, 2, 3, 4) for c, liq, fee in ((1, "Removed", 300000), (2, "Added", -200000))]
+            for v in (1, 2, 3, 4, 5) for c, liq, fee in ((1, "Removed", 300000), (2, "Added", -200000))]
     if day == 2:
         fees[1]["feePerShare"] = -250000; fees[1]["effectiveDate"] = 20260916   # NYSE rebate change
     return {

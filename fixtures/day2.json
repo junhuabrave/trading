@@ -289,6 +289,12 @@
    "tradable": true
   },
   {
+   "symbolIdx": 1,
+   "venueId": 5,
+   "venueSymbol": "AAPL",
+   "tradable": true
+  },
+  {
    "symbolIdx": 2,
    "venueId": 1,
    "venueSymbol": "MSFT",
@@ -313,6 +319,12 @@
    "tradable": true
   },
   {
+   "symbolIdx": 2,
+   "venueId": 5,
+   "venueSymbol": "MSFT",
+   "tradable": true
+  },
+  {
    "symbolIdx": 3,
    "venueId": 1,
    "venueSymbol": "JPM",
@@ -337,6 +349,12 @@
    "tradable": true
   },
   {
+   "symbolIdx": 3,
+   "venueId": 5,
+   "venueSymbol": "JPM",
+   "tradable": true
+  },
+  {
    "symbolIdx": 4,
    "venueId": 1,
    "venueSymbol": "GS",
@@ -357,6 +375,12 @@
   {
    "symbolIdx": 4,
    "venueId": 4,
+   "venueSymbol": "GS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 4,
+   "venueId": 5,
    "venueSymbol": "GS",
    "tradable": true
   },
@@ -381,6 +405,12 @@
   {
    "symbolIdx": 5,
    "venueId": 4,
+   "venueSymbol": "MS",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 5,
+   "venueId": 5,
    "venueSymbol": "MS",
    "tradable": true
   },
@@ -405,6 +435,12 @@
   {
    "symbolIdx": 6,
    "venueId": 4,
+   "venueSymbol": "SPY",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 6,
+   "venueId": 5,
    "venueSymbol": "SPY",
    "tradable": true
   },
@@ -429,6 +465,12 @@
   {
    "symbolIdx": 7,
    "venueId": 4,
+   "venueSymbol": "GME",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 7,
+   "venueId": 5,
    "venueSymbol": "GME",
    "tradable": true
   },
@@ -453,6 +495,12 @@
   {
    "symbolIdx": 8,
    "venueId": 4,
+   "venueSymbol": "TSLA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 8,
+   "venueId": 5,
    "venueSymbol": "TSLA",
    "tradable": true
   },
@@ -477,6 +525,12 @@
   {
    "symbolIdx": 9,
    "venueId": 4,
+   "venueSymbol": "XYZQ",
+   "tradable": false
+  },
+  {
+   "symbolIdx": 9,
+   "venueId": 5,
    "venueSymbol": "XYZQ",
    "tradable": false
   },
@@ -501,6 +555,12 @@
   {
    "symbolIdx": 10,
    "venueId": 4,
+   "venueSymbol": "NVDA",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 10,
+   "venueId": 5,
    "venueSymbol": "NVDA",
    "tradable": true
   },
@@ -525,6 +585,12 @@
   {
    "symbolIdx": 11,
    "venueId": 4,
+   "venueSymbol": "NEWCO",
+   "tradable": true
+  },
+  {
+   "symbolIdx": 11,
+   "venueId": 5,
    "venueSymbol": "NEWCO",
    "tradable": true
   }
@@ -576,6 +642,17 @@
     401
    ],
    "oneWayLatencyNs": 25000
+  },
+  {
+   "venueId": 5,
+   "mic": "DARK",
+   "name": "Dark Pool ATS",
+   "venueType": "Ats",
+   "protocol": 5,
+   "sessionIds": [
+    501
+   ],
+   "oneWayLatencyNs": 30000
   },
   {
    "venueId": 9,
@@ -639,6 +716,13 @@
   },
   {
    "venueId": 4,
+   "date": 20260916,
+   "openTs": 1757950200000000000,
+   "closeTs": 1757973600000000000,
+   "auctionTs": 1757973600000000000
+  },
+  {
+   "venueId": 5,
    "date": 20260916,
    "openTs": 1757950200000000000,
    "closeTs": 1757973600000000000,
@@ -742,6 +826,20 @@
   },
   {
    "venueId": 4,
+   "feeCode": 2,
+   "liquidity": "Added",
+   "feePerShare": -200000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 5,
+   "feeCode": 1,
+   "liquidity": "Removed",
+   "feePerShare": 300000,
+   "effectiveDate": 20260901
+  },
+  {
+   "venueId": 5,
    "feeCode": 2,
    "liquidity": "Added",
    "feePerShare": -200000,

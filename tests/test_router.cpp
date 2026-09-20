@@ -38,7 +38,9 @@ namespace fs = std::filesystem;
 
 static constexpr uint32_t SYM = 1;
 static constexpr uint32_t MAXSYM = 10;
-static constexpr uint16_t MAXVENUE = 4;
+static constexpr uint16_t MAXVENUE = 5;      // 1..4 are exchanges, 5 is the dark pool
+static constexpr uint16_t LIT = 4;           // the venues that display a quote
+static constexpr uint16_t DARK = 5;
 
 // A book we can state in a sentence: put a price and a size on a venue and nothing else is there.
 struct Market {
@@ -365,9 +367,12 @@ int main(int argc, char** argv) {
         uint64_t planned = 0, tookSomething = 0, isoPlans = 0 , blocked = 0, posted = 0;
 
         for (int iter = 0; iter < 20000; ++iter) {
+            // Lit venues only. An alternative trading system displays no quote, so it is not what a
+            // trade-through is measured against and it has no touch to sweep.
             std::array<Quoted, MAXVENUE + 1> mkt{};
             for (uint16_t v = 1; v <= MAXVENUE; ++v) market.clear(v);
-            for (uint16_t v = 1; v <= MAXVENUE; ++v) {
+            sessionsDown(router, DARK, 3);
+            for (uint16_t v = 1; v <= LIT; ++v) {
                 Quoted& q = mkt[v];
                 q.up = (rng() % 10) != 0;                       // one venue in ten has no session
                 if (q.up) sessionsUp(router, v, 3); else sessionsDown(router, v, 3);
@@ -397,7 +402,7 @@ int main(int argc, char** argv) {
 
             // the best protected quote anywhere, whoever is showing it
             int64_t bestProtected = 0;
-            for (uint16_t v = 1; v <= MAXVENUE; ++v) {
+            for (uint16_t v = 1; v <= LIT; ++v) {
                 const int64_t px = buy ? mkt[v].ask : mkt[v].bid;
                 if (!px) continue;
                 if (!bestProtected || (buy ? px < bestProtected : px > bestProtected)) bestProtected = px;
@@ -412,7 +417,7 @@ int main(int argc, char** argv) {
                 const Child& c = p.children[i];
                 total += c.qty;
                 CHECK(c.qty > 0);
-                CHECK(c.venueId >= 1 && c.venueId <= MAXVENUE);
+                CHECK(c.venueId >= 1 && c.venueId <= LIT);
                 CHECK(mkt[c.venueId].up);                       // never routed where there is no session
                 if (c.orderFlags & OrderFlags::iso) anyIso = true;
                 if (c.tif == Tif::Ioc) {                        // a taking child
@@ -441,7 +446,7 @@ int main(int argc, char** argv) {
             for (uint8_t i = 0; i < p.count; ++i) {
                 const Child& c = p.children[i];
                 if (c.tif != Tif::Ioc) continue;
-                for (uint16_t v = 1; v <= MAXVENUE; ++v) {
+                for (uint16_t v = 1; v <= LIT; ++v) {
                     const int64_t px = buy ? mkt[v].ask : mkt[v].bid;
                     if (!px) continue;
                     const bool better = buy ? px < c.price : px > c.price;
@@ -476,6 +481,131 @@ int main(int argc, char** argv) {
         CHECK(blocked > 50);                // and venues that could not be reached
         CHECK(posted > 500);
         for (uint16_t v = 1; v <= MAXVENUE; ++v) sessionsUp(router, v, 3);
+    }
+
+    // ---- 12 to 17: the strategy library, and the client instructions that override it
+    {
+        auto setProfile = [&](uint16_t profileId, RouteStrategy st, int64_t darkWait, int64_t passiveWait) {
+            Frame<RoutingProfileUpdate> u;
+            u.init();
+            u.body.profileId = profileId; u.body.strategy = st;
+            u.body.params[0] = darkWait; u.body.params[1] = passiveWait;
+            router.apply(&u.header);
+        };
+        // account 42 in the fixture carries routing profile 3
+        const uint16_t PROFILE = 3;
+        auto twoSided = [&]() {
+            for (uint16_t v = 1; v <= MAXVENUE; ++v) market.clear(v);
+            market.quote(2, BookSide::Bid, 22'00000000LL, 500);
+            market.quote(2, BookSide::Ask, 22'02000000LL, 500);
+        };
+
+        // 12: DarkFirst rests at the midpoint where nobody can see it, and waits
+        setProfile(PROFILE, RouteStrategy::DarkFirst, 40'000'000, 0);
+        twoSided();
+        Plan d;
+        CHECK(router.plan(parent(Side::Buy, 400, 22'05000000LL, OrderFlags::allowDark), 400, 0, d));
+        std::printf("dark first: venue %u (%s) at %lld, displayed %lld, waits %lld ms, "
+                    "the lit alternative was venue %u at %lld\n",
+                    d.children[0].venueId, router.venueKind(d.children[0].venueId) == uint8_t(VenueType::Ats) ? "an ATS" : "lit",
+                    (long long)d.children[0].price, (long long)d.children[0].displayQty,
+                    (long long)(d.waitNs / 1'000'000), d.rejectedAltVenue, (long long)d.rejectedAltCost);
+        CHECK(d.count == 1);
+        CHECK(d.children[0].venueId == DARK);
+        CHECK(router.venueKind(DARK) == uint8_t(VenueType::Ats));
+        CHECK(d.children[0].price == 22'01000000LL);          // the midpoint of 22.00 and 22.02
+        CHECK(d.children[0].displayQty == 0);                 // dark: nothing is shown
+        CHECK(d.children[0].qty == 400);
+        CHECK(d.waitNs == 40'000'000);
+        CHECK(d.reason == PlanReason::DarkFirst);
+        CHECK(d.strategyTag == uint16_t(RouteStrategy::DarkFirst));
+        // the runner-up is what crossing now would have cost, which is how a review judges the wait
+        CHECK(d.rejectedAltVenue == 2 && d.rejectedAltCost != 0);
+        CHECK(d.expectedCost < d.rejectedAltCost);            // the midpoint beats paying the offer
+
+        // 13: the same order without allowDark never sees a dark venue
+        Plan lit;
+        CHECK(router.plan(parent(Side::Buy, 400, 22'05000000LL), 400, 0, lit));
+        std::printf("dark declined: %u child(ren) on venue %u, reason %u\n",
+                    lit.count, lit.children[0].venueId, lit.reason);
+        for (uint8_t i = 0; i < lit.count; ++i) CHECK(lit.children[i].venueId != DARK);
+        CHECK(lit.strategyTag == uint16_t(RouteStrategy::Sweep));
+        CHECK(lit.reason == PlanReason::DarkDeclined);      // and the log says the client refused dark
+        CHECK(lit.children[0].price == 22'02000000LL);        // it crossed the spread instead
+
+        // 14: PassivePost joins the near touch rather than paying the spread, and posts only
+        setProfile(PROFILE, RouteStrategy::PassivePost, 0, 150'000'000);
+        twoSided();
+        Plan pp;
+        CHECK(router.plan(parent(Side::Buy, 400, 22'05000000LL), 400, 0, pp));
+        std::printf("passive post: venue %u at %lld (the bid, not the offer), post only %s, waits %lld ms\n",
+                    pp.children[0].venueId, (long long)pp.children[0].price,
+                    (pp.children[0].orderFlags & OrderFlags::postOnly) ? "yes" : "NO",
+                    (long long)(pp.waitNs / 1'000'000));
+        CHECK(pp.count == 1);
+        CHECK(pp.children[0].price == 22'00000000LL);         // joined the bid
+        CHECK(pp.children[0].tif == Tif::Day);
+        CHECK(pp.children[0].orderFlags & OrderFlags::postOnly);
+        CHECK(pp.children[0].venueId != DARK);                // a displayed quote is not dark
+        CHECK(pp.waitNs == 150'000'000);
+        CHECK(pp.reason == PlanReason::Passive);
+
+        // 15: the timer goes off. What was resting crosses, and the log says that is why.
+        const uint64_t pid = parent(Side::Buy, 400, 22'05000000LL).orderId;
+        CHECK(!router.escalated(pid));
+        router.onTimer(pid);
+        CHECK(router.escalated(pid));
+        Plan esc;
+        NewOrder po = parent(Side::Buy, 400, 22'05000000LL);
+        po.orderId = pid;
+        CHECK(router.plan(po, 400, 0, esc));
+        std::printf("timer fired: %u child(ren), venue %u at %lld, tif %u, reason %u\n",
+                    esc.count, esc.children[0].venueId, (long long)esc.children[0].price,
+                    unsigned(esc.children[0].tif), esc.reason);
+        CHECK(esc.children[0].tif == Tif::Ioc);               // it crossed
+        CHECK(esc.children[0].price == 22'02000000LL);        // at the offer
+        CHECK(esc.reason == PlanReason::Escalated);
+        CHECK(esc.waitNs == 0);                               // and it is not waiting for anything now
+        router.forget(pid);
+        CHECK(!router.escalated(pid));
+
+        // 16: MidPeg rests at the midpoint on a lit venue
+        setProfile(PROFILE, RouteStrategy::MidPeg, 0, 0);
+        twoSided();
+        Plan mp;
+        CHECK(router.plan(parent(Side::Buy, 400, 22'05000000LL), 400, 0, mp));
+        std::printf("mid peg: venue %u at %lld, type %u\n",
+                    mp.children[0].venueId, (long long)mp.children[0].price, unsigned(mp.children[0].ordType));
+        CHECK(mp.count == 1);
+        CHECK(mp.children[0].price == 22'01000000LL);
+        CHECK(mp.children[0].ordType == OrdType::Pegged);
+        CHECK(mp.children[0].venueId != DARK);
+        CHECK(mp.reason == PlanReason::MidPeg);
+
+        // 17: a client that says no internalisation is obeyed, and a strategy with nowhere dark to
+        // go falls through to the lit market rather than doing nothing
+        setProfile(PROFILE, RouteStrategy::DarkFirst, 40'000'000, 0);
+        twoSided();
+        sessionsDown(router, DARK, 3);
+        Plan fell;
+        CHECK(router.plan(parent(Side::Buy, 400, 22'05000000LL, OrderFlags::allowDark), 400, 0, fell));
+        std::printf("no dark session: fell through to venue %u at %lld\n",
+                    fell.children[0].venueId, (long long)fell.children[0].price);
+        CHECK(fell.children[0].venueId == 2);
+        sessionsUp(router, DARK, 3);
+        {
+            // the fixture has no wholesaler, so this checks the rule rather than a venue: an
+            // internalising venue is refused when the client said not to internalise
+            NewOrder ni = parent(Side::Buy, 400, 22'05000000LL, OrderFlags::noInternalize | OrderFlags::allowDark);
+            Plan p2;
+            CHECK(router.plan(ni, 400, 0, p2));
+            for (uint8_t i = 0; i < p2.count; ++i) {
+                const uint8_t k = router.venueKind(p2.children[i].venueId);
+                CHECK(k != uint8_t(VenueType::Internal) && k != uint8_t(VenueType::Wholesaler));
+            }
+            std::printf("no internalize: %u child(ren), none on an internalising venue\n", p2.count);
+        }
+        setProfile(PROFILE, RouteStrategy::Sweep, 0, 0);
     }
 
     std::printf("router tests ok\n");
