@@ -27,6 +27,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <array>
+#include <random>
 #include <vector>
 
 using namespace trading;
@@ -348,6 +350,132 @@ int main(int argc, char** argv) {
         CHECK(s.children[0].venueId == 2 && s.children[0].price == 22'00000000LL);
         CHECK(s.children[1].price == 21'99000000LL);
         CHECK(s.qty() == 400);
+    }
+
+    // ---- 11: Regulation NMS, as a property over random markets rather than a chosen one
+    //
+    // Named shapes prove the cases someone thought of. A trade-through is what happens in the case
+    // nobody thought of, so this generates markets instead: every venue independently quoting or
+    // not, at prices that lock and cross each other, with sessions up and down, and a parent that
+    // may be a buy or a sell, a limit or a market order. The rules are checked on every plan.
+    {
+        struct Quoted { int64_t bid = 0, ask = 0, bidQty = 0, askQty = 0; bool up = false; };
+        std::mt19937_64 rng(20260920);
+        const int64_t base = 22'00000000LL;
+        uint64_t planned = 0, tookSomething = 0, isoPlans = 0 , blocked = 0, posted = 0;
+
+        for (int iter = 0; iter < 20000; ++iter) {
+            std::array<Quoted, MAXVENUE + 1> mkt{};
+            for (uint16_t v = 1; v <= MAXVENUE; ++v) market.clear(v);
+            for (uint16_t v = 1; v <= MAXVENUE; ++v) {
+                Quoted& q = mkt[v];
+                q.up = (rng() % 10) != 0;                       // one venue in ten has no session
+                if (q.up) sessionsUp(router, v, 3); else sessionsDown(router, v, 3);
+                // Prices straddle the base by up to five cents on each side, which lets venues
+                // lock each other (equal bid and ask) and cross each other (bid above an ask).
+                if (rng() % 4 != 0) {
+                    q.bid = base + (int64_t(rng() % 11) - 5) * 1'000'000;
+                    q.bidQty = int64_t(100 * (1 + rng() % 5));
+                    market.quote(v, BookSide::Bid, q.bid, q.bidQty);
+                }
+                if (rng() % 4 != 0) {
+                    q.ask = base + (int64_t(rng() % 11) - 5) * 1'000'000;
+                    q.askQty = int64_t(100 * (1 + rng() % 5));
+                    market.quote(v, BookSide::Ask, q.ask, q.askQty);
+                }
+            }
+            const bool buy = (rng() & 1) != 0;
+            const bool marketOrder = rng() % 8 == 0;
+            const int64_t qty = int64_t(100 * (1 + rng() % 12));
+            const int64_t limit = marketOrder ? 0 : base + (int64_t(rng() % 13) - 6) * 1'000'000;
+            NewOrder o = parent(buy ? Side::Buy : Side::Sell, qty, limit,
+                                0, marketOrder ? OrdType::Market : OrdType::Limit);
+            Plan p;
+            const bool any = router.plan(o, qty, 0, p);
+            ++planned;
+            if (!any) { CHECK(p.count == 0); continue; }
+
+            // the best protected quote anywhere, whoever is showing it
+            int64_t bestProtected = 0;
+            for (uint16_t v = 1; v <= MAXVENUE; ++v) {
+                const int64_t px = buy ? mkt[v].ask : mkt[v].bid;
+                if (!px) continue;
+                if (!bestProtected || (buy ? px < bestProtected : px > bestProtected)) bestProtected = px;
+            }
+
+            int64_t total = 0;
+            int takenPrices = 0;
+            int64_t seenPrices[MAX_CHILDREN]{};
+            bool anyIso = false, anyTake = false;
+            std::array<bool, MAXVENUE + 1> takenAt{};
+            for (uint8_t i = 0; i < p.count; ++i) {
+                const Child& c = p.children[i];
+                total += c.qty;
+                CHECK(c.qty > 0);
+                CHECK(c.venueId >= 1 && c.venueId <= MAXVENUE);
+                CHECK(mkt[c.venueId].up);                       // never routed where there is no session
+                if (c.orderFlags & OrderFlags::iso) anyIso = true;
+                if (c.tif == Tif::Ioc) {                        // a taking child
+                    anyTake = true;
+                    takenAt[c.venueId] = true;
+                    const int64_t shown = buy ? mkt[c.venueId].ask : mkt[c.venueId].bid;
+                    const int64_t size = buy ? mkt[c.venueId].askQty : mkt[c.venueId].bidQty;
+                    CHECK(c.price == shown);                    // took a price that was actually displayed
+                    CHECK(c.qty <= size);                       // and no more than was displayed
+                    if (limit) CHECK(buy ? c.price <= limit : c.price >= limit);
+                    bool fresh = true;
+                    for (int k = 0; k < takenPrices; ++k) if (seenPrices[k] == c.price) fresh = false;
+                    if (fresh) seenPrices[takenPrices++] = c.price;
+                } else {
+                    ++posted;
+                    if (limit) CHECK(c.price == limit);
+                }
+            }
+            CHECK(total <= qty);                                 // never more than the parent asked for
+            if (anyTake) ++tookSomething;
+
+            // No trade-through: for every child that took, any venue showing a strictly better
+            // price must have been taken in the same plan. If it could not be - no session - the
+            // plan must not have taken at the worse price at all, which is what stops an
+            // intermarket sweep that does not actually sweep.
+            for (uint8_t i = 0; i < p.count; ++i) {
+                const Child& c = p.children[i];
+                if (c.tif != Tif::Ioc) continue;
+                for (uint16_t v = 1; v <= MAXVENUE; ++v) {
+                    const int64_t px = buy ? mkt[v].ask : mkt[v].bid;
+                    if (!px) continue;
+                    const bool better = buy ? px < c.price : px > c.price;
+                    if (better) CHECK(takenAt[v]);
+                }
+            }
+            // ISO exactly when it is needed: set if and only if the plan took at more than one
+            // price. Setting it otherwise claims a sweep that did not happen; not setting it when
+            // several prices were taken is the trade-through the flag exists to make lawful.
+            if (takenPrices > 1) { CHECK(anyIso); ++isoPlans; }
+            else for (uint8_t i = 0; i < p.count; ++i) CHECK(!(p.children[i].orderFlags & OrderFlags::iso));
+            if (p.reason == PlanReason::BlockedByBetter) ++blocked;
+            // The best price taken is the best price anywhere, or nothing was taken.
+            if (anyTake && bestProtected) {
+                int64_t bestTaken = 0;
+                for (uint8_t i = 0; i < p.count; ++i) {
+                    const Child& c = p.children[i];
+                    if (c.tif != Tif::Ioc) continue;
+                    if (!bestTaken || (buy ? c.price < bestTaken : c.price > bestTaken)) bestTaken = c.price;
+                }
+                CHECK(bestTaken == bestProtected);
+            }
+        }
+        std::printf("Regulation NMS over %llu random markets: %llu plans took liquidity, %llu across "
+                    "more than one price (all ISO), %llu stopped at a price they could not reach, "
+                    "%llu children rested\n",
+                    (unsigned long long)planned, (unsigned long long)tookSomething,
+                    (unsigned long long)isoPlans, (unsigned long long)blocked, (unsigned long long)posted);
+        CHECK(planned == 20000);
+        CHECK(tookSomething > 2000);        // the generator really did produce marketable orders
+        CHECK(isoPlans > 100);              // and markets worth sweeping across
+        CHECK(blocked > 50);                // and venues that could not be reached
+        CHECK(posted > 500);
+        for (uint16_t v = 1; v <= MAXVENUE; ++v) sessionsUp(router, v, 3);
     }
 
     std::printf("router tests ok\n");

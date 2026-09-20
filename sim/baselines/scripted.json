@@ -5,12 +5,13 @@
   "orders": 1039,
   "accepted": 983,
   "rejected": 56,
-  "fills": 609,
-  "cancelled": 504,
-  "children": 2088,
-  "checkpoints": 12,
-  "coreSeq": 22965,
+  "fills": 614,
+  "cancelled": 557,
+  "children": 2398,
+  "reroutes": 1291,
+  "checkpoints": 13,
+  "coreSeq": 25299,
   "mdSeq": 3691,
-  "verified": 10584,
-  "finalHash": "97f36b0aee144a0f8aa48bfecfa387a9a29ee6724f7262b905e2e6ff96a6189f"
+  "verified": 11676,
+  "finalHash": "7ca08cb5930e9bbec90be4cbcb5c0f824365a6ce26798d6d7735666be02fda9d"
 }

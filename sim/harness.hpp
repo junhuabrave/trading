@@ -46,6 +46,7 @@ struct Config {
 struct Stats {
     uint64_t orders = 0, accepted = 0, rejected = 0, fills = 0, cancelled = 0, venueRejects = 0, children = 0, checkpoints = 0, coreSeq = 0, mdSeq = 0, dropCopyFills = 0, delayed = 0;
     std::array<uint64_t, 16> placed{};
+    uint64_t reroutes = 0, stranded = 0;
     std::array<uint8_t, 32> finalHash{};
     uint64_t maxRingLag = 0, unidentifiedMd = 0;
 };
@@ -437,6 +438,7 @@ public:
         Stats s; s.orders = eng.oms().orders(); s.accepted = eng.oms().accepted(); s.rejected = eng.oms().rejected();
         s.fills = eng.oms().fills(); s.cancelled = eng.oms().cancelled(); s.venueRejects = eng.oms().venueRejected(); s.children = eng.router().children();
         s.checkpoints = eng.checkpoints(); s.coreSeq = core.lastSeq(); s.mdSeq = md.lastSeq(); s.delayed = venue.delayed();
+        s.reroutes = eng.oms().reroutes(); s.stranded = eng.oms().stranded();
         for (const auto& e : venue.dropCopy()) if (e.execType == ExecType::Fill || e.execType == ExecType::PartialFill) ++s.dropCopyFills;
         s.placed = eng.router().placements(2); s.finalHash = eng.hash(); s.maxRingLag = maxLag; s.unidentifiedMd = eng.unidentified();
         liveStats_ = s; return s;

@@ -112,6 +112,19 @@ public:
     uint64_t orders() const noexcept { return orders_; } uint64_t accepted() const noexcept { return accepted_; } uint64_t rejected() const noexcept { return rejected_; }
     uint64_t fills() const noexcept { return fills_; } uint64_t cancelled() const noexcept { return cancelled_; } uint64_t venueRejected() const noexcept { return venueRejected_; }
     uint64_t cancelsSent() const noexcept { return cancelsSent_; } uint64_t cancelRejected() const noexcept { return cancelRejected_; }
+    // A parent with quantity left, no child working it, and nobody asked to plan again. It should
+    // be impossible: every path that ends a child either re-routes, completes a cancel or replace,
+    // or gives up and tells the client. Counting it is how we find out that one of those paths is
+    // missing, rather than discovering it as an order that quietly stopped working.
+    uint64_t stranded() const noexcept {
+        uint64_t n = 0;
+        byId_.forEach([&](uint64_t, const uint32_t& s) {
+            const Order& o = slots_[s];
+            if (o.isChild || terminal(o.status)) return;
+            if (o.leaves > 0 && o.liveChildren == 0 && !o.unrouted) ++n;
+        });
+        return n;
+    }
     uint64_t reroutes() const noexcept { return reroutes_; } uint64_t replaced() const noexcept { return replaced_; } uint64_t illegal() const noexcept { return illegal_; }
     size_t live() const noexcept { return size_t(slots_.size() - 1 - free_.size()); }
 
@@ -219,13 +232,20 @@ private:
             // over-fill after a replace-down, a late fill racing a cancel): it happened, the client owns it
             if (terminal(p.status)) return;
             ch->cum += e.lastQty; ch->leaves -= e.lastQty; p.cum += e.lastQty; p.leaves -= e.lastQty; p.cumNotional += e.lastQty * e.lastPx; ++fills_;
-            if ((e.execType == ExecType::Fill || ch->leaves <= 0) && !terminal(ch->status)) { ch->status = F; if (p.liveChildren) --p.liveChildren; }
+            const bool childDone = (e.execType == ExecType::Fill || ch->leaves <= 0) && !terminal(ch->status);
+            if (childDone) { ch->status = F; if (p.liveChildren) --p.liveChildren; }
             bool parentDone = p.leaves <= 0 && p.liveChildren == 0;   // done only once no child can still execute
             if (!transition(p, parentDone ? Event::Fill : Event::PartialFill)) return;
             Fee fee = feeFor(e.venueId, e.liquidityFlag);
             int64_t amount = e.lastQty * fee.perShare; if (fee.cap && amount > fee.cap) amount = fee.cap;
             report(p, parentDone ? ExecType::Fill : ExecType::PartialFill, e.lastQty, e.lastPx, e.liquidityFlag, amount, f, emit, 0, 0, fee.code, e.venueId, e.venueExecId, e.venueTs);
-            if (parentDone) { state(p, f, emit, 0); release(p); }
+            if (parentDone) { state(p, f, emit, 0); release(p); return; }
+            // A child that filled everything it was given, on a parent that still has quantity left,
+            // is the end of that child exactly as a cancel or a reject is, and the parent has to be
+            // planned again. While the router sent one child for the whole parent this could not
+            // happen - a full child fill was a full parent fill - so the case went unwritten; a
+            // sweep produces it on the first plan that splits an order across venues.
+            if (childDone && p.liveChildren == 0) childEnded(p, f, emit, 0, false);
         } else if (e.execType == ExecType::Cancelled) {
             if (terminal(ch->status)) return;
             ch->status = C; if (p.liveChildren) --p.liveChildren;

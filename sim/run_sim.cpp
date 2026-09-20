@@ -16,10 +16,10 @@ static std::string baselineJson(const std::string& scenario, const Config& c, co
     char buf[2048];
     std::snprintf(buf, sizeof buf,
         "{\n  \"scenario\": \"%s\",\n  \"seed\": %llu,\n  \"steps\": %u,\n  \"orders\": %llu,\n  \"accepted\": %llu,\n  \"rejected\": %llu,\n"
-        "  \"fills\": %llu,\n  \"cancelled\": %llu,\n  \"children\": %llu,\n  \"checkpoints\": %llu,\n  \"coreSeq\": %llu,\n  \"mdSeq\": %llu,\n"
+        "  \"fills\": %llu,\n  \"cancelled\": %llu,\n  \"children\": %llu,\n  \"reroutes\": %llu,\n  \"checkpoints\": %llu,\n  \"coreSeq\": %llu,\n  \"mdSeq\": %llu,\n"
         "  \"verified\": %llu,\n  \"finalHash\": \"%s\"\n}\n",
         scenario.c_str(), (unsigned long long)c.seed, c.steps, (unsigned long long)s.orders, (unsigned long long)s.accepted, (unsigned long long)s.rejected,
-        (unsigned long long)s.fills, (unsigned long long)s.cancelled, (unsigned long long)s.children, (unsigned long long)s.checkpoints,
+        (unsigned long long)s.fills, (unsigned long long)s.cancelled, (unsigned long long)s.children, (unsigned long long)s.reroutes, (unsigned long long)s.checkpoints,
         (unsigned long long)s.coreSeq, (unsigned long long)s.mdSeq, (unsigned long long)v.verified, hex(s.finalHash).c_str());
     return buf;
 }
@@ -55,6 +55,8 @@ int main(int argc, char** argv) {
         scenario.c_str(), c.drill.empty() ? "" : (" drill=" + c.drill).c_str(), (unsigned long long)s.coreSeq, (unsigned long long)s.mdSeq,
         (unsigned long long)s.orders, (unsigned long long)s.accepted, (unsigned long long)s.rejected, (unsigned long long)s.fills, (unsigned long long)s.cancelled,
         (unsigned long long)s.venueRejects, (unsigned long long)s.children, (unsigned long long)s.checkpoints, (unsigned long long)s.delayed);
+    std::printf("  reroutes %llu, parents left with leaves and no plan: %llu\n",
+                (unsigned long long)s.reroutes, (unsigned long long)s.stranded);
     std::printf("  sessions used: "); for (size_t i = 0; i < c.sessions; ++i) std::printf("%zu:%llu ", i, (unsigned long long)s.placed[i]); std::printf("\n");
     int rc = 0;
     // drop copy must agree with the OMS-side fill count: what the venue says it did equals what we booked
@@ -63,6 +65,10 @@ int main(int argc, char** argv) {
     // every market-data frame must carry a (feedId, venueSeq) identity, or nothing can replay to it
     if (s.unidentifiedMd) { std::printf("FAIL: %llu market-data frames had no venueSeq\n", (unsigned long long)s.unidentifiedMd); rc = 1; }
     if (c.drill == "session-drop" && (s.placed[0] == 0 || s.cancelled == 0)) { std::printf("FAIL: session-drop drill did not cancel or re-place\n"); rc = 1; }
+    // Every path that ends a child either plans again, finishes a cancel or replace, or gives up
+    // and tells the client. A parent that has quantity left and nobody working it means one of
+    // those paths is missing, and an order that quietly stopped working is the worst kind of bug.
+    if (s.stranded) { std::printf("FAIL: %llu parents left with leaves and no plan\n", (unsigned long long)s.stranded); rc = 1; }
     if (c.drill == "kill" && s.rejected == 0) { std::printf("FAIL: kill drill rejected nothing\n"); rc = 1; }
     if (c.drill == "rate-burst" && s.rejected == 0) { std::printf("FAIL: rate burst rejected nothing\n"); rc = 1; }
 
@@ -90,7 +96,7 @@ int main(int argc, char** argv) {
     if (!baseline.empty()) {
         std::ifstream in(baseline); if (!in) { std::printf("FAIL: no baseline at %s (run with --write-baseline)\n", baseline.c_str()); return 1; }
         std::string stored((std::istreambuf_iterator<char>(in)), {});
-        for (const char* k : {"orders", "accepted", "rejected", "fills", "cancelled", "children", "checkpoints", "coreSeq", "verified", "finalHash"}) {
+        for (const char* k : {"orders", "accepted", "rejected", "fills", "cancelled", "children", "reroutes", "checkpoints", "coreSeq", "verified", "finalHash"}) {
             std::string a = jsonField(stored, k), b = jsonField(json, k);
             if (a != b) { std::printf("FAIL: baseline %s: %s stored=%s now=%s\n", baseline.c_str(), k, a.c_str(), b.c_str()); rc = 1; }
         }
