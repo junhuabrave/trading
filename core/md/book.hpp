@@ -216,10 +216,17 @@ public:
         uint32_t maxSymbolIdx = 0;
         uint32_t maxVenueId = 0;
         int64_t  snapshotIntervalNs = 5'000'000'000;   // BookSnapshot per symbol, for late joiners
+        // A builder started mid-day. It holds nothing for a (symbol, venue) until a BookSnapshot for
+        // it arrives, then applies only the deltas the snapshot does not already include.
+        bool     lateJoin = false;
     };
 
     BookBuilder(const refdata::RefData& rd, Params p, std::byte* base)
-        : rd_(rd), p_(p), base_(base), sym_(size_t(p.maxSymbolIdx) + 1) {}
+        : rd_(rd), p_(p), base_(base), sym_(size_t(p.maxSymbolIdx) + 1),
+          ladderSeq_((size_t(p.maxSymbolIdx) + 1) * (p.maxVenueId + 1), 0),
+          snapSeq_((size_t(p.maxSymbolIdx) + 1) * (p.maxVenueId + 1), 0),
+          loaded_((size_t(p.maxSymbolIdx) + 1) * (p.maxVenueId + 1), 0),
+          snapOpen_((size_t(p.maxSymbolIdx) + 1) * (p.maxVenueId + 1), 0) {}
 
     // One normalised message. Emits an Nbbo when the top of book moves and a BookSnapshot when a
     // symbol is due one. Everything else it does is a write into the shared segment.
@@ -229,6 +236,7 @@ public:
         if (const auto* d = as<BookDelta>(f))    { onDelta(*d, now, emit); return; }
         if (const auto* n = as<Nbbo>(f))         { onSip(*n, now, emit); return; }
         if (const auto* s = as<SymbolStatus>(f)) { onStatus(*s, now, emit); return; }
+        if (const auto* b = as<BookSnapshot>(f)) { if (p_.lateJoin) onSnapshot(*b, now, emit); else ++passed_; return; }
         if (as<Trade>(f) || as<Imbalance>(f) || as<VenueStatus>(f)) { ++passed_; return; }
         ++ignored_;
     }
@@ -261,6 +269,8 @@ public:
     uint64_t ignored() const noexcept { return ignored_; }
     uint64_t crossedVenue() const noexcept { return crossedVenue_; }    // a venue book crossing itself: a defect
     uint64_t deepOnly() const noexcept { return deepOnly_; }            // deltas that moved nothing at the touch
+    uint64_t awaitingSnapshot() const noexcept { return awaiting_; }    // late join: deltas before a ladder's snapshot
+    uint64_t alreadyInSnapshot() const noexcept { return covered_; }    // late join: deltas the snapshot included
 
     BookReader reader() const noexcept { return BookReader(base_, p_.maxSymbolIdx, p_.maxVenueId); }
 
@@ -299,6 +309,17 @@ private:
         ++deltas_;
         if (d.symbolIdx == 0 || d.symbolIdx > p_.maxSymbolIdx) { ++ignored_; return; }
         if (d.venueId == 0 || d.venueId > p_.maxVenueId) { ++ignored_; return; }
+        const size_t li = size_t(d.symbolIdx) * (p_.maxVenueId + 1) + d.venueId;
+        if (p_.lateJoin) {
+            if (!loaded_[li]) { ++awaiting_; return; }                 // nothing to apply it to yet
+            // Strictly older than the snapshot: already in it. Equal is applied again, because one
+            // venue message can produce several deltas under one venueSeq (a replace is a delete and
+            // an add) and the snapshot may have been taken between them. A delta carries the level's
+            // absolute quantity, so applying one the snapshot already reflects changes nothing.
+            if (d.venueSeq < snapSeq_[li]) { ++covered_; return; }
+        }
+        ladderSeq_[li] = d.venueSeq;
+        snapOpen_[li] = 0;                                             // the ladder moved: the next page starts afresh
         Symbol& st = sym_[d.symbolIdx];
         st.touched = true;
         st.venueMask |= (1ull << d.venueId);
@@ -326,6 +347,31 @@ private:
             return;
         }
         republish(d.symbolIdx, d.venueSeq, d.venueTs ? d.venueTs : now, now, emit);
+    }
+
+    // A late joiner's starting point for one (symbol, venue). A ladder deeper than one message holds
+    // arrives as several BookSnapshots with the same venueSeq. A page extends the one before it only
+    // if it has the same venueSeq and nothing has moved the ladder in between; anything else starts
+    // the ladder again. That needs no page number in the message, and loading a level twice is
+    // loading it once.
+    void onSnapshot(const BookSnapshot& b, int64_t now, auto& emit) {
+        if (b.symbolIdx == 0 || b.symbolIdx > p_.maxSymbolIdx || b.venueId == 0 || b.venueId > p_.maxVenueId) { ++ignored_; return; }
+        const size_t li = size_t(b.symbolIdx) * (p_.maxVenueId + 1) + b.venueId;
+        SharedLadder& L = ladderFor(b.symbolIdx, b.venueId);
+        Symbol& st = sym_[b.symbolIdx];
+        st.touched = true;
+        st.venueMask |= (1ull << b.venueId);
+        {
+            Held h(L);
+            const bool continues = loaded_[li] && snapOpen_[li] && snapSeq_[li] == b.venueSeq;
+            if (!continues) { clearSide(L, BookSide::Bid); clearSide(L, BookSide::Ask); }
+            for (uint8_t i = 0; i < b.bidCount && i < 16; ++i) setLevel(L, b.symbolIdx, BookSide::Bid, b.bidPx[i], b.bidQty[i], 0);
+            for (uint8_t i = 0; i < b.askCount && i < 16; ++i) setLevel(L, b.symbolIdx, BookSide::Ask, b.askPx[i], b.askQty[i], 0);
+        }
+        loaded_[li] = 1; snapOpen_[li] = 1;
+        snapSeq_[li] = b.venueSeq;
+        if (b.venueSeq > ladderSeq_[li]) ladderSeq_[li] = b.venueSeq;
+        republish(b.symbolIdx, b.venueSeq, now, now, emit);
     }
 
     void onSip(const Nbbo& n, int64_t now, auto& emit) {
@@ -521,47 +567,55 @@ private:
         emit(&n.header);
     }
 
+    // The whole ladder, sixteen levels a side per message, best first on both sides so the first
+    // message carries the touch. Stamped with the last venueSeq this venue applied to this ladder -
+    // not the symbol's last message from any feed, which is a different feed's sequence whenever
+    // another venue or the tape spoke last, and would have a joiner skip or re-apply the wrong deltas.
     template <class E>
     void emitSnapshot(uint32_t symbolIdx, uint16_t venueId, int64_t now, E& emit) {
         const SharedLadder& L = ladderFor(symbolIdx, venueId);
-        Frame<BookSnapshot> s;
-        s.init();
-        s.header.sourceId = p_.sourceId;
-        s.header.streamId = p_.feedId;
-        s.header.originTs = now;
-        s.body.symbolIdx = symbolIdx;
-        s.body.venueId = venueId;
-        s.body.venueSeq = tops()[symbolIdx].body.venueSeq;
-        // Best first on both sides: a late joiner cares about the touch and may not care about
-        // level sixteen, and a truncated snapshot should lose the far end rather than the near one.
-        uint8_t n = 0;
-        uint64_t m = L.bidMask;
-        while (m && n < 16) {
-            const int i = 63 - std::countl_zero(m);
-            m &= ~(1ull << i);
-            s.body.bidPx[n] = L.bidBase + int64_t(i) * L.bidTick;
-            s.body.bidQty[n] = L.bidQty[i];
-            ++n;
-        }
-        s.body.bidCount = n;
-        n = 0;
-        m = L.askMask;
-        while (m && n < 16) {
-            const int i = std::countr_zero(m);
-            m &= m - 1;
-            s.body.askPx[n] = L.askBase + int64_t(i) * L.askTick;
-            s.body.askQty[n] = L.askQty[i];
-            ++n;
-        }
-        s.body.askCount = n;
-        ++snapshots_;
-        emit(&s.header);
+        uint64_t bm = L.bidMask, am = L.askMask;
+        do {
+            Frame<BookSnapshot> s;
+            s.init();
+            s.header.sourceId = p_.sourceId;
+            s.header.streamId = p_.feedId;
+            s.header.originTs = now;
+            s.body.symbolIdx = symbolIdx;
+            s.body.venueId = venueId;
+            s.body.venueSeq = ladderSeq_[size_t(symbolIdx) * (p_.maxVenueId + 1) + venueId];
+            uint8_t n = 0;
+            while (bm && n < 16) {
+                const int i = 63 - std::countl_zero(bm);
+                bm &= ~(1ull << i);
+                s.body.bidPx[n] = L.bidBase + int64_t(i) * L.bidTick;
+                s.body.bidQty[n] = L.bidQty[i];
+                ++n;
+            }
+            s.body.bidCount = n;
+            n = 0;
+            while (am && n < 16) {
+                const int i = std::countr_zero(am);
+                am &= am - 1;
+                s.body.askPx[n] = L.askBase + int64_t(i) * L.askTick;
+                s.body.askQty[n] = L.askQty[i];
+                ++n;
+            }
+            s.body.askCount = n;
+            ++snapshots_;
+            emit(&s.header);
+        } while (bm || am);
     }
 
     const refdata::RefData& rd_;
     Params p_;
     std::byte* base_;
     std::vector<Symbol> sym_;
+    std::vector<uint64_t> ladderSeq_;     // per (symbol, venue): the last venueSeq applied to that ladder
+    std::vector<uint64_t> snapSeq_;       // late join: the venueSeq of the snapshot it was loaded from
+    std::vector<uint8_t>  loaded_;        // late join: the ladder has had its snapshot
+    std::vector<uint8_t>  snapOpen_;      // late join: the last thing to touch the ladder was a snapshot page
+    uint64_t awaiting_ = 0, covered_ = 0;
     uint64_t applied_ = 0, deltas_ = 0, topChanges_ = 0, nbbos_ = 0, snapshots_ = 0;
     uint64_t rebases_ = 0, dropped_ = 0, offLadder_ = 0, passed_ = 0, ignored_ = 0, crossedVenue_ = 0;
     uint64_t deepOnly_ = 0, outsideWindow_ = 0;

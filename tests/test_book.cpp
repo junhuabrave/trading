@@ -15,14 +15,20 @@
 //   6. a second process's view: the segment reopened read-only shows the same book
 //   7. BookSnapshot carries the touch first and is what a late joiner would rebuild from
 //   8. the ladder re-bases when the market walks away from its window, and says what it dropped
+//   9. a consumer started mid-day from the snapshots reaches the same book as one started at the
+//      open, verified by hash, over two feeds whose venue sequences are unrelated numbers (MD-9)
 #include "book.hpp"
 #include "itch.hpp"
 #include "itch_sim.hpp"
+#include "blake3.h"
+#include <array>
+#include <tuple>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <thread>
 #include <chrono>
 #include <vector>
@@ -283,8 +289,11 @@ int main(int argc, char** argv) {
             if (const auto* s = as<BookSnapshot>(f)) got.push_back(*s);
         });
         CHECK(!got.empty());
-        size_t withDepth = 0;
+        size_t withDepth = 0, pages = 0;
+        std::set<std::pair<uint32_t, uint16_t>> first;
         for (const BookSnapshot& s : got) {
+            const bool firstPage = first.insert({s.symbolIdx, s.venueId}).second;
+            if (!firstPage) { ++pages; continue; }                  // a continuation: the far end of the ladder
             CHECK(s.symbolIdx >= 1 && s.symbolIdx <= MAXSYM);
             CHECK(s.bidCount <= 16 && s.askCount <= 16);
             for (int i = 1; i < s.bidCount; ++i) CHECK(s.bidPx[i] < s.bidPx[i - 1]);   // best first
@@ -297,8 +306,9 @@ int main(int argc, char** argv) {
                 if (t.bidVenue == s.venueId) CHECK(s.bidPx[0] == t.bid);
             }
         }
-        std::printf("snapshots: %zu published, %zu two-sided, best first on both sides\n", got.size(), withDepth);
+        std::printf("snapshots: %zu published, %zu two-sided, best first on both sides, %zu continuation pages\n", got.size(), withDepth, pages);
         CHECK(withDepth > 0);
+        CHECK(pages > 0);                                          // the simulated books are deeper than one page
     }
 
     // ---- 8: a market that walks out of the window
@@ -334,6 +344,107 @@ int main(int argc, char** argv) {
         CHECK(std::popcount(l.bidMask) <= int(BOOK_LEVELS));
         CHECK(t.bid == start + 100'000'000);                       // the touch is the highest bid seen
         CHECK(walk.crossedVenue() == 0);
+    }
+
+    // ---- 9: a late joiner. Two feeds into one book, each with its own venue sequence - Nasdaq's in
+    // the millions, Cboe's in the billions, as unrelated as real ones are. The builder that started
+    // at the open publishes snapshots as the day goes; a second builder starts halfway through the
+    // stream, holds nothing until each ladder's snapshot arrives, and must end on the same book.
+    {
+        const uint32_t FEED_BATS = 3; const uint16_t VENUE_BATS = 3;
+        std::vector<std::vector<std::byte>> stream;                 // what a consumer of the feed layer reads, in order
+        auto keepFrame = [&](const FrameHeader* f) { const auto* p = reinterpret_cast<const std::byte*>(f); stream.emplace_back(p, p + f->frameLength); };
+        BookSegment sa(work + "/open.seg", MAXSYM, MAXVENUE, 20260915, true), sb(work + "/late.seg", MAXSYM, MAXVENUE, 20260915, true);
+        BookBuilder::Params ap{};
+        ap.sourceId = 12; ap.feedId = FEED_ITCH; ap.maxSymbolIdx = MAXSYM; ap.maxVenueId = MAXVENUE;
+        ap.snapshotIntervalNs = 20'000'000;                         // a round of snapshots every 20 ms of the day
+        BookBuilder open(rd, ap, sa.base());
+        BookBuilder::Params lp = ap; lp.lateJoin = true;
+        BookBuilder late(rd, lp, sb.base());
+        BookSegment sc(work + "/replay.seg", MAXSYM, MAXVENUE, 20260915, true);
+        BookBuilder replayer(rd, lp, sc.base());
+
+        ItchSim xnas(snap, MAXSYM, 7, MIDNIGHT), bats(snap, MAXSYM, 99, MIDNIGHT);
+        itch::Decoder::Params dp1{}; dp1.feedId = FEED_ITCH; dp1.venueId = VENUE_XNAS; dp1.sourceId = 8; dp1.sessionMidnightNs = MIDNIGHT;
+        itch::Decoder::Params dp3 = dp1; dp3.feedId = FEED_BATS; dp3.venueId = VENUE_BATS; dp3.sourceId = 18;
+        itch::Decoder d1(snap, dp1), d3(snap, dp3);
+        uint64_t seq1 = 1'000'000, seq3 = 4'000'000'000ULL;
+        int64_t now = MIDNIGHT + 9 * 3600 * 1'000'000'000LL;
+        auto feedOpen = [&](const FrameHeader* f) { keepFrame(f); open.apply(f, now, [](const FrameHeader*) {}); };   // the feed, not what the book concludes from it
+        auto run = [&](ItchSim& v, itch::Decoder& d, uint64_t& seq, bool opening) {
+            std::vector<std::vector<uint8_t>> msgs;
+            auto grab = [&](const uint8_t* m, size_t len) { msgs.emplace_back(m, m + len); };
+            if (opening) v.open(grab); else v.step(grab);
+            for (const auto& m : msgs) d.decodeMessage(m.data(), m.size(), ++seq, false, feedOpen);
+        };
+        run(xnas, d1, seq1, true); run(bats, d3, seq3, true);
+        for (int i = 0; i < 120'000; ++i) {
+            run(xnas, d1, seq1, false);
+            if (i % 3 != 0) run(bats, d3, seq3, false);              // the two feeds do not move in step
+            now += 2000;
+            if (i % 1000 == 0) open.publishSnapshots(now, keepFrame);
+        }
+        // the late joiner reads from the middle of the day to the end
+        const size_t from = stream.size() / 2;
+        for (size_t i = from; i < stream.size(); ++i) late.apply(reinterpret_cast<const FrameHeader*>(stream[i].data()), now, [](const FrameHeader*) {});
+        // The other way to join: fetch the latest round of snapshots first, then replay the feed from
+        // a point before it. The deltas between that point and the snapshots are already in them.
+        size_t round = 0;
+        for (size_t i = from; i < stream.size(); ++i) if (as<BookSnapshot>(reinterpret_cast<const FrameHeader*>(stream[i].data()))) { round = i; break; }
+        while (round > 0 && as<BookSnapshot>(reinterpret_cast<const FrameHeader*>(stream[round - 1].data()))) --round;   // the start of that round
+        size_t roundEnd = round;
+        while (roundEnd < stream.size() && as<BookSnapshot>(reinterpret_cast<const FrameHeader*>(stream[roundEnd].data()))) ++roundEnd;
+        for (size_t i = round; i < roundEnd; ++i) replayer.apply(reinterpret_cast<const FrameHeader*>(stream[i].data()), now, [](const FrameHeader*) {});
+        for (size_t i = round - 20'000; i < stream.size(); ++i) {
+            const FrameHeader* f = reinterpret_cast<const FrameHeader*>(stream[i].data());
+            if (i >= round && i < roundEnd) continue;               // already loaded
+            replayer.apply(f, now, [](const FrameHeader*) {});
+        }
+
+        // Each book reduced to what a consumer acts on: every (symbol, venue) ladder as price and
+        // quantity per level, and the consolidated top. Hashed, and compared level by level so a
+        // mismatch says where.
+        auto digest = [&](const BookReader& r, std::map<std::tuple<uint32_t, uint16_t, int, int64_t>, int64_t>& levels) {
+            blake3_hasher h; blake3_hasher_init(&h);
+            for (uint32_t sy = 1; sy <= MAXSYM; ++sy) {
+                for (uint16_t v = 1; v <= MAXVENUE; ++v) {
+                    LadderSnapshot l{};
+                    if (!r.ladder(sy, v, l)) continue;
+                    for (int side = 0; side < 2; ++side) {
+                        const uint64_t mask = side == 0 ? l.bidMask : l.askMask;
+                        for (int i = 0; i < 64; ++i) if (mask & (1ull << i)) {
+                            const int64_t px = l.priceAt(side == 0 ? BookSide::Bid : BookSide::Ask, i);
+                            const int64_t q = (side == 0 ? l.bidQty : l.askQty)[i];
+                            levels[{sy, v, side, px}] = q;
+                        }
+                    }
+                }
+                TopBody t{};
+                if (r.top(sy, t)) { const int64_t top[4] = {t.bid, t.ask, t.bidQty, t.askQty}; blake3_hasher_update(&h, top, sizeof top); }
+            }
+            for (const auto& [k, q] : levels) { const int64_t rec[5] = {std::get<0>(k), std::get<1>(k), std::get<2>(k), std::get<3>(k), q}; blake3_hasher_update(&h, rec, sizeof rec); }
+            std::array<uint8_t, 32> out{}; blake3_hasher_finalize(&h, out.data(), 32); return out;
+        };
+        std::map<std::tuple<uint32_t, uint16_t, int, int64_t>, int64_t> la, lb;
+        std::map<std::tuple<uint32_t, uint16_t, int, int64_t>, int64_t> lc;
+        const auto ha = digest(open.reader(), la), hb = digest(late.reader(), lb), hc = digest(replayer.reader(), lc);
+        size_t differ = 0;
+        for (const auto& [k, q] : la) { auto it = lb.find(k); if (it == lb.end() || it->second != q) ++differ; }
+        for (const auto& [k, q] : lb) if (!la.count(k)) ++differ;
+        std::set<uint16_t> venues; for (const auto& [k, q] : la) venues.insert(std::get<1>(k));
+        char hx[17]; for (int i = 0; i < 8; ++i) std::snprintf(hx + 2 * i, 3, "%02x", ha[i]);
+        std::printf("late join: started at frame %zu of %zu, %llu deltas held back awaiting a snapshot, %llu already in one; "
+                    "%zu levels on %zu venues, %zu differ; hash %s %s\n", from, stream.size(),
+                    (unsigned long long)late.awaitingSnapshot(), (unsigned long long)late.alreadyInSnapshot(),
+                    la.size(), venues.size(), differ, hx, ha == hb ? "identical" : "DIFFERENT");
+        std::printf("snapshot first, then the feed replayed from 20000 frames before it: %llu deltas already in the snapshot; hash %s\n",
+                    (unsigned long long)replayer.alreadyInSnapshot(), hc == ha ? "identical" : "DIFFERENT");
+        CHECK(venues.size() == 2);                                  // both feeds really are in the book
+        CHECK(late.awaitingSnapshot() > 0);                         // it really did start with nothing
+        CHECK(replayer.alreadyInSnapshot() > 0);                    // and the replay really did overlap the snapshot
+        CHECK(differ == 0);
+        CHECK(ha == hb);
+        CHECK(ha == hc);
     }
 
     std::printf("book builder tests ok\n");
