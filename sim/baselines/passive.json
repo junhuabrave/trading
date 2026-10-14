@@ -1,0 +1,17 @@
+{
+  "scenario": "passive",
+  "seed": 7,
+  "steps": 6000,
+  "orders": 3802,
+  "accepted": 3465,
+  "rejected": 337,
+  "fills": 1999,
+  "cancelled": 1446,
+  "children": 6684,
+  "reroutes": 2999,
+  "checkpoints": 46,
+  "coreSeq": 91243,
+  "mdSeq": 16775,
+  "verified": 42682,
+  "finalHash": "d9051e15e79cef22f0af518bcac469fa10f69ae298384d8173de9a6e45aebcb9"
+}

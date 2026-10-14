@@ -102,6 +102,7 @@ public:
         else if (auto* e = as<ExecReport>(f)) { if (e->childOrderId != 0) onVenueExec(*e, f, emit); }
         else if (auto* c = as<CancelOrder>(f)) { if (f->sourceId != src_) onCancel(*c, f, emit); }
         else if (auto* r = as<ReplaceOrder>(f)) onReplace(*r, f, emit);
+        else if (auto* st = as<OrderState>(f)) { if (f->sourceId != src_ && st->reason == uint16_t(Reason::StrategyTimer)) onStrategyTimer(*st, f, emit); }
         else if (auto* k = as<KillSwitch>(f)) { if (k->release == 0) onKill(*k, f, emit); }
         else if (auto* fs = as<FeeScheduleUpdate>(f)) putFee(fs->record);
         else if (auto* n = as<Nbbo>(f)) onNbbo(*n);
@@ -297,6 +298,17 @@ private:
         o->pendClOrdId = c.clOrdId;
         if (o->liveChildren == 0 && !o->unrouted) { transition(*o, Event::CancelAck); ++cancelled_; report(*o, ExecType::Cancelled, 0, 0, Liquidity::Unset, 0, f, emit, 0, c.clOrdId); state(*o, f, emit, 0); release(*o); return; }
         state(*o, f, emit, 0); cancelChildren(*o, f, emit);           // an unrouted parent waits here for the router's child
+    }
+    // The router's wait for a resting child ran out. Cancelling the children is all the OMS does:
+    // when the venue confirms, the parent has leaves and nothing working it, which is the ordinary
+    // re-route, and the router - which knows why it asked - plans to cross. A parent that has moved
+    // on since the router asked (filled, being cancelled or replaced, already re-routing) is left
+    // alone, because the request was about a child that is no longer the point.
+    void onStrategyTimer(const OrderState& st, const FrameHeader* f, const Emit& emit) {
+        const uint32_t* s = byId_.find(st.orderId); if (!s) return;
+        Order& p = slots_[*s];
+        if (p.isChild || (p.status != L && p.status != PF) || p.unrouted || p.liveChildren == 0) return;
+        cancelChildren(p, f, emit);
     }
     void onReplace(const ReplaceOrder& r, const FrameHeader* f, const Emit& emit) {
         Order* o = nullptr;

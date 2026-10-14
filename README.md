@@ -140,16 +140,23 @@ one that works for this class.
 
 `run_sim` runs a scenario (random flow with a seed, adversarial flow, or a scripted event log made by
 `sim/scenarios/make_scenario.py`) through one core stream and one market-data stream: client orders,
-cancels and replaces go through the risk engine, the OMS owns the parent, a stub router places one
-child per accepted order (and per re-route request) on the least loaded venue session, the venue
-simulator acks, fills or rests it, the OMS aggregates venue-level reports into client-level ones
-with fees and the NBBO, and the risk engine books the fills. The sequencer
+cancels and replaces go through the risk engine, the OMS owns the parent, the router plans each
+accepted order (and each re-route request) against the book, the venue simulator acks, fills or
+rests the children, the OMS aggregates venue-level reports into client-level ones with fees and the
+NBBO, and the risk engine books the fills. The sequencer
 checkpoints periodically and the engine answers each `Checkpoint` with a `CheckpointAck` carrying its
 state hash. Then the journal is replayed cold: market data is pulled to each `MdWatermark`, every
 risk verdict, routing plan and session placement is recomputed and compared to what was sequenced,
 and every `CheckpointAck` hash must match. Drills: firm kill switch mid-day, a venue session dropped
 and restored (cancel-on-disconnect, re-placement on the survivors), a 2 500-order burst against the
-rate limit, and a torn journal tail with sequencer resumption. Each scenario has a stored baseline
+rate limit, and a torn journal tail with sequencer resumption. The resting strategies have
+scenarios of their own (`--profile`, `--dark-venue`): DarkFirst against a pool where hidden flow
+fills at the midpoint and against one where nothing ever trades, and PassivePost joining the near
+touch. A plan that waits arms a sequenced `Timer`; when it fires, the router sends the OMS an
+`OrderState` with reason `StrategyTimer`, the OMS cancels the resting child, and the ordinary
+re-route plans it again to cross. Each run checks that nothing is left resting once its timer has
+gone off, that dark and passive fills add liquidity, and that a post-only child which would cross on
+arrival is cancelled back by the venue rather than allowed to take. Each scenario has a stored baseline
 (counts and final hash); `make test` fails on any drift and `make baselines` regenerates them after a
 reviewed change.
 
@@ -210,6 +217,6 @@ The design puts transport and archive on Aeron. `BroadcastRing` and `Journal` ha
 
 ## Next (v0.3, see docs/03)
 
-1. `core/md`: line receiver, line arbitrator, decoders (ITCH, SIP), source selector, book builder; per-feed journals keyed by venue sequence.
-2. `core/router`: the strategy library over the book view and `VenueScorecard`, replacing `sim/stub_router.hpp`.
+1. `core/router`: RT-8's arrival-spread measurement, which needs a second lit venue with its own feed in the simulator; RT-7 waits for the venue gateways and RT-10 for the position keeper.
+2. `core/md`: BookSnapshot late-joiner recovery proved by hash (MD-9), the vendor feed adapter (MD-12), and the golden run against a published Nasdaq sample day.
 3. OMS: Day expiry through sequenced timers, GTC carry, venue-side replace once a venue protocol supports it.

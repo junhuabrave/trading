@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <fstream>
 #include <map>
+#include <optional>
 
 namespace trading::sim {
 
@@ -41,6 +42,13 @@ struct Config {
     uint64_t seed = 7; uint32_t steps = 5000; uint32_t checkpointEvery = 2000; uint32_t sessions = 3; uint32_t throttlePerSec = 2000;
     bool adversarial = false; uint64_t segmentBytes = 4 << 20;
     bool benchMode = false;          // steady clock instead of the fake one: seqTs deltas are real elapsed time
+    // The account's routing profile, sequenced at the start of the day: empty leaves the snapshot's
+    // default (Sweep), otherwise "dark-first", "passive-post" or "mid-peg".
+    std::string profile;
+    // A dark venue (the fixture's ATS, venue 5) alongside the lit one, and the share of steps on
+    // which hidden contra flow meets what rests there. Negative means no dark venue at all.
+    int darkContraPct = -1;
+    int allowDarkPct = 0;            // share of client orders that permit dark routing
 };
 
 struct Stats {
@@ -49,6 +57,8 @@ struct Stats {
     uint64_t reroutes = 0, stranded = 0;
     std::array<uint8_t, 32> finalHash{};
     uint64_t maxRingLag = 0, unidentifiedMd = 0;
+    uint64_t timersArmed = 0, timersFired = 0, escalations = 0, darkChildren = 0, darkDeclined = 0, postOnlyCancelled = 0, stillResting = 0;
+    VenueSim::StrategyFills darkFills{}, passiveFills{};
 };
 
 inline std::string hex(const std::array<uint8_t, 32>& h, size_t n = 32) { std::string s; char b[3]; for (size_t i = 0; i < n; ++i) { std::snprintf(b, 3, "%02x", h[i]); s += b; } return s; }
@@ -58,6 +68,10 @@ class Engine {
 public:
     enum class Mode { Live, Verify };
     static constexpr uint32_t BOOK_MAX_VENUE = 9;          // the fixture's venues, internal included
+    // A plan that is willing to wait asks for a sequenced Timer: the router's strategyId is its own
+    // sourceId, and the timer id is a counter both modes advance in the same order, because both
+    // make the same plans in the same order.
+    struct Arm { uint32_t timerId; int64_t fireTs; };
 
     Engine(const Snapshot& snap, uint32_t sessions, Mode mode, const Journal* mdJournal = nullptr, uint16_t sourceId = 3)
         : mode_(mode), src_(sourceId), risk_(rd_), oms_(4, 1 << 18),
@@ -91,6 +105,7 @@ public:
     void onCore(const FrameHeader* f) {
         if (auto* ss = as<SessionStart>(f)) { if (std::memcmp(ss->snapshotHash.data(), snapHash_.data(), 32) != 0) throw std::runtime_error("engine: snapshot hash mismatch at SessionStart"); return; }
         if (as<Checkpoint>(f)) { onCheckpoint(f); return; }
+        if (auto* t = as<Timer>(f)) { if (t->strategyId == src_) onTimer(f, *t); return; }
         if (auto* ack = as<CheckpointAck>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) verifyAck(*ack); return; }
         if (auto* w = as<MdWatermark>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) pullMd(*w); return; }
         // the OMS's own frames come back on the stream: in Verify they must equal what this OMS produced
@@ -105,6 +120,8 @@ public:
         } else oms_.apply(f, [&](FrameHeader* out) { const auto* p = reinterpret_cast<const std::byte*>(out); omsExpected_.emplace_back(p, p + out->frameLength); });
         router_.apply(f);
         risk_.apply(f);
+        // a parent the client has heard the last of: the router no longer needs to remember it crossed
+        if (auto* e = as<ExecReport>(f); e && f->sourceId == 4 && e->childOrderId == 0 && oms::terminal(e->ordStatus)) router_.forget(e->orderId);
         if (auto* o = as<NewOrder>(f)) { lastOrder_ = *o; lastHdr_ = *f; lastIsReplace_ = false; if (mode_ == Mode::Live) decideLive(f); else decideVerify(f); return; }
         if (auto* r = as<ReplaceOrder>(f)) { lastReplace_ = *r; lastHdr_ = *f; lastIsReplace_ = true; if (mode_ == Mode::Live) decideLive(f); else decideVerify(f); return; }
         if (auto* d = as<RiskDecision>(f)) {
@@ -118,6 +135,10 @@ public:
         }
         if (auto* st = as<OrderState>(f)) {                // the OMS asks for a plan when a parent has leaves and no live child
             if (f->sourceId == 4 && st->reason == uint16_t(Reason::RerouteRequired)) { if (mode_ == Mode::Live) routeLive(f, st->orderId); else routeVerify(f, st->orderId); }
+            if (f->sourceId == src_ && st->reason == uint16_t(Reason::StrategyTimer)) {
+                if (mode_ == Mode::Verify) verifyStrategyTimer(f, *st);
+                recheckIfReplacing(st->orderId, f->seqTs);         // the OMS has just declined it for that reason
+            }
             return;
         }
         if (auto* rt = as<RouteDecision>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) verifyRoute(f, *rt); return; }
@@ -127,6 +148,7 @@ public:
     // ----- outputs (Live): batches of frames the harness sequences after each poll
     struct Batch { std::vector<std::vector<std::byte>> frames; };
     std::deque<Batch>& pending() { return pending_; }
+    std::vector<Arm>& arms() { return arms_; }               // timers to arm, drained by the harness with the batches
 
     // ----- state
     std::array<uint8_t, 32> hash() const {
@@ -139,6 +161,8 @@ public:
     uint64_t checkpoints() const { return checkpoints_; }
     uint64_t verified() const { return verified_; } uint64_t mismatches() const { return mismatches_; }
     uint64_t unidentified() const { return unidentified_; }
+    uint64_t timersArmed() const { return timerCounter_; } uint64_t timersFired() const { return timersFired_; }
+    uint64_t escalatedPlans() const { return escalatedPlans_; }
     const std::string& firstMismatch() const { return firstMismatch_; }
 
 private:
@@ -193,6 +217,8 @@ private:
         router::Plan p;
         router_.plan(o, o.qty, f->seqTs, p);                // false means no children, which the OMS reads as a decline
         router_.placed(p);
+        if (uint32_t id = awaitFor(o.orderId, p)) arms_.push_back({id, f->seqTs + p.waitNs});
+        if (p.count && p.reason == router::PlanReason::Escalated) ++escalatedPlans_;   // a wait that ran out and was acted on
         Frame<RouteDecision> rt; rt.init(); rt.header.sourceId = src_;
         fillDecision(o, p, rt.body);
         emitWatermarks(f->seq);
@@ -202,6 +228,58 @@ private:
             fillChild(o, p.children[i], c.body, (uint64_t(src_) << 48) | ++childCounter_, f->seqTs);
             emit(&c.header, f->seq, false);
         }
+    }
+    // A plan that rests and is willing to wait gets a timer id; the latest one per parent is the only
+    // one that counts, so a timer left over from a plan that has since been replaced does nothing.
+    uint32_t awaitFor(uint64_t parent, const router::Plan& p) {
+        if (p.count == 0 || p.waitNs <= 0) return 0;
+        const uint32_t id = ++timerCounter_;
+        timerParent_.insert(id, parent);
+        parentTimer_.insert(parent, id);
+        return id;
+    }
+    // The wait ran out. If the parent is still resting on the plan that asked for the wait, the
+    // router will cross on its next plan and the OMS is asked to take the resting children back;
+    // their cancellation is an ordinary re-route. Both modes decide this from the same OMS state,
+    // at the same point in the stream, because the Timer is a frame in the journal.
+    void onTimer(const FrameHeader* f, const Timer& t) {
+        ++timersFired_;
+        const uint64_t* pp = timerParent_.find(t.timerId);
+        if (!pp) return;
+        const uint64_t parent = *pp;
+        timerParent_.erase(t.timerId);
+        const uint32_t* latest = parentTimer_.find(parent);
+        if (!latest || *latest != t.timerId) return;         // a newer plan has its own timer
+        parentTimer_.erase(parent);
+        if (recheckIfReplacing(parent, f->seqTs)) return;
+        const oms::Order* o = oms_.find(parent);
+        if (!o || o->isChild || (o->status != OrdStatus::Live && o->status != OrdStatus::PartiallyFilled) || o->unrouted || o->liveChildren == 0) return;
+        router_.onTimer(parent);
+        if (mode_ == Mode::Live) {
+            Frame<OrderState> st; st.init(); st.header.sourceId = src_;
+            st.body.orderId = parent; st.body.status = o->status; st.body.leavesQty = o->leaves; st.body.cumQty = o->cum;
+            st.body.reason = uint16_t(Reason::StrategyTimer);
+            emit(&st.header, f->seq);
+        } else expectedTimers_[f->seq] = parent;
+    }
+    // A replace in flight owns the parent's children until risk decides: accepted, they are cancelled
+    // and planned again anyway; rejected, the parent goes back to resting on the same child, which
+    // would then rest with no timer. So the wait is checked again shortly instead of being dropped.
+    bool recheckIfReplacing(uint64_t parent, int64_t now) {
+        const oms::Order* o = oms_.find(parent);
+        if (!o || o->status != OrdStatus::PendingReplace || o->liveChildren == 0) return false;
+        const uint32_t id = ++timerCounter_;
+        timerParent_.insert(id, parent);
+        parentTimer_.insert(parent, id);
+        if (mode_ == Mode::Live) arms_.push_back({id, now + 1'000'000});
+        return true;
+    }
+    void verifyStrategyTimer(const FrameHeader* f, const OrderState& st) {
+        ++verified_;
+        auto it = expectedTimers_.find(f->causeSeq);
+        if (it == expectedTimers_.end() || it->second != st.orderId || st.reason != uint16_t(Reason::StrategyTimer))
+            note("OrderState from the router for parent " + std::to_string(st.orderId) + " (cause " + std::to_string(f->causeSeq) + ") that the replay did not ask for");
+        else expectedTimers_.erase(it);
     }
     void onCheckpoint(const FrameHeader* f) {
         auto h = hash(); ++checkpoints_;
@@ -254,6 +332,7 @@ private:
         router::Plan p;
         router_.plan(o, o.qty, f->seqTs, p);
         router_.placed(p);
+        awaitFor(o.orderId, p);
         plans_[f->seq] = PlannedRoute{p, 0};
     }
     // Every frame the live OMS sequenced must be exactly what this OMS produced from the same inputs,
@@ -324,7 +403,7 @@ private:
     }
     static router::Router::Params routerParams(uint32_t sessions) {
         router::Router::Params r{};
-        r.sourceId = 3; r.maxVenueId = 4; r.sessionsPerVenue = uint16_t(sessions);
+        r.sourceId = 3; r.maxVenueId = 5; r.sessionsPerVenue = uint16_t(sessions);   // the lit venues and the ATS
         return r;
     }
 
@@ -339,6 +418,11 @@ private:
     struct PlannedRoute { router::Plan p; uint8_t seen; };
     std::map<uint64_t, Expected> expected_; std::map<uint64_t, PlannedRoute> plans_;   // keyed by cause seq (verify only)
     std::deque<Batch> pending_;
+    std::vector<Arm> arms_;
+    util::FlatMap<uint64_t, uint64_t> timerParent_{1024};   // timer id -> parent
+    util::FlatMap<uint64_t, uint32_t> parentTimer_{1024};   // parent -> its latest timer id
+    std::map<uint64_t, uint64_t> expectedTimers_;           // verify: cause seq -> parent the router asked about
+    uint32_t timerCounter_ = 0; uint64_t timersFired_ = 0, escalatedPlans_ = 0;
     std::vector<std::pair<uint64_t, std::array<uint8_t, 32>>> expectedAcks_;
     uint64_t childCounter_ = 0, checkpoints_ = 0, verified_ = 0, mismatches_ = 0, unidentified_ = 0; std::string firstMismatch_;
 };
@@ -365,6 +449,15 @@ public:
         Engine eng(snap, cfg_.sessions, Engine::Mode::Live);
         StreamReader engCore(coreRing, coreJ, 1), engMd(mdRing, mdJ, 1), venueCore(coreRing, coreJ, 1);
         VenueSim venue(VenueSim::Params{2, 7, cfg_.sessions, cfg_.throttlePerSec, 12'000}, snap.instruments().size() + 1);
+        // The ATS: one session, nothing displayed, filled at the midpoint when hidden flow meets it.
+        std::optional<VenueSim> dark;
+        if (cfg_.darkContraPct >= 0) {
+            VenueSim::Params dp{5, 17, 1, cfg_.throttlePerSec, 30'000};
+            dp.dark = true; dp.contraPct = uint32_t(cfg_.darkContraPct); dp.seed = cfg_.seed ^ 0xDA4C;
+            dark.emplace(dp, snap.instruments().size() + 1);
+        }
+        auto venueOnMd = [&](const FrameHeader* f) { venue.onMd(f); if (dark) dark->onMd(f); };
+        auto venueOnCore = [&](const FrameHeader* f, int64_t t) { venue.onCore(f, t); if (dark) dark->onCore(f, t); };
         // The real stack, not a stand-in: ITCH bytes on two lines, arbitrated, decoded, and built
         // into a book whose top of book is what the client simulator prices against. Every message
         // of every simulated day now goes through the components a real day would.
@@ -377,7 +470,9 @@ public:
         msp.seed = cfg_.seed ^ 0xFEED;
         BookSegment bookSeg(bookPath, NSYM, 4, snap.businessDate(), true);
         MdStack feed(snap, engRef(eng), msp, bookSeg.base());
-        ClientSim client(ClientSim::Params{42, 2, 9, NSYM, cfg_.adversarial, 15, 30}, cfg_.seed ^ 0xC11E);
+        ClientSim::Params cp{42, 2, 9, NSYM, cfg_.adversarial, 15, 30};
+        cp.allowDarkPct = cfg_.allowDarkPct;
+        ClientSim client(cp, cfg_.seed ^ 0xC11E);
 
         auto flushEngine = [&]() {
             auto& pend = eng.pending();
@@ -386,11 +481,21 @@ public:
                 std::vector<FrameHeader*> hs; for (auto& f : b.frames) hs.push_back(reinterpret_cast<FrameHeader*>(f.data()));
                 while (!core.submitBatch(std::span<FrameHeader*>(hs))) engCore.poll([&](const FrameHeader* f) { eng.onCore(f); });
             }
+            for (const Engine::Arm& a : eng.arms()) core.armTimer(3, a.timerId, a.fireTs);
+            eng.arms().clear();
         };
         auto drainCore = [&]() { if (cfg_.benchMode) { uint64_t l = coreRing.lag(0); if (l > maxLag) maxLag = l; } engCore.poll([&](const FrameHeader* f) { eng.onCore(f); }); flushEngine(); };
         auto drainMd = [&]() { engMd.poll([&](const FrameHeader* f) { eng.onMd(f); }); };
         auto submitCore = [&](FrameHeader* f) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!core.submit(f)) drainCore(); };
         auto venueEmit = [&](FrameHeader* f) { while (!core.submit(f)) drainCore(); };
+        auto venuesRun = [&](int64_t t) {
+            venueCore.poll([&](const FrameHeader* f) { venueOnCore(f, t); });
+            venue.flush(t, venueEmit); venue.process(t, venueEmit);
+            if (dark) { dark->flush(t, venueEmit); dark->process(t, venueEmit); }
+        };
+        // Timers due by now go on the core stream as frames; both readers are caught up here, so the
+        // sequencer has room for them.
+        auto fireTimers = [&](int64_t t) { if (core.fireTimers(t)) drainCore(); };
 
         // session set-up as sequenced messages, then the day
         core.openSession(snap.businessDate(), snap.version(), snap.contentHash());
@@ -404,7 +509,7 @@ public:
             if (!events.empty()) {
                 auto* f = reinterpret_cast<FrameHeader*>(events[eventIdx++].data());
                 if (!cfg_.benchMode && f->originTs > fake.t) fake.t = f->originTs;
-                if (f->streamId == 1) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!md.submit(f)) drainMd(); venue.onMd(f); }
+                if (f->streamId == 1) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!md.submit(f)) drainMd(); venueOnMd(f); }
                 else submitCore(f);
             } else {
                 feed.burst(uint32_t(1 + rng() % 3), now, [&](const FrameHeader* cf) {
@@ -417,7 +522,7 @@ public:
                     // is replayed by a sequence of ours.
                     if (md::identityVenueSeq(f) == 0) { submitCore(f); return; }
                     while (!md.submit(f)) drainMd();
-                    venue.onMd(f);
+                    venueOnMd(f);
                 });
                 if (cfg_.drill == "rate-burst" && step == steps / 2) client.burst(2500, now, [&](uint32_t s) { return feed.mid(s); }, submitCore);
                 else client.step(now, [&](uint32_t s) { return feed.mid(s); }, submitCore);
@@ -427,12 +532,13 @@ public:
             }
             if (cfg_.drill == "session-drop" && step == steps / 3) venue.dropSession(0, now, venueEmit);
             if (cfg_.drill == "session-drop" && step == steps / 2) venue.restoreSession(0, now, venueEmit);
-            venueCore.poll([&](const FrameHeader* f) { venue.onCore(f, now); });
-            venue.flush(now, venueEmit); venue.process(now, venueEmit);
+            venuesRun(now);
             if (rng() & 1) { drainMd(); drainCore(); } else { drainCore(); drainMd(); }
+            fireTimers(now);
         }
         // settle: let in-flight children arrive and everything drain
-        for (int i = 0; i < 64; ++i) { int64_t t = cfg_.benchMode ? steady.nowNs() : (fake.t += 1'000'000); venueCore.poll([&](const FrameHeader* f) { venue.onCore(f, t); }); venue.flush(t, venueEmit); venue.process(t, venueEmit); drainMd(); drainCore(); }
+        // Timers stop going off a few steps before the end, so a cancel one causes reaches its venue.
+        for (int i = 0; i < 64; ++i) { int64_t t = cfg_.benchMode ? steady.nowNs() : (fake.t += 1'000'000); venuesRun(t); drainMd(); drainCore(); if (i < 60) fireTimers(t); }
         core.checkpoint(); drainCore(); drainCore();
 
         Stats s; s.orders = eng.oms().orders(); s.accepted = eng.oms().accepted(); s.rejected = eng.oms().rejected();
@@ -441,6 +547,12 @@ public:
         s.reroutes = eng.oms().reroutes(); s.stranded = eng.oms().stranded();
         for (const auto& e : venue.dropCopy()) if (e.execType == ExecType::Fill || e.execType == ExecType::PartialFill) ++s.dropCopyFills;
         s.placed = eng.router().placements(2); s.finalHash = eng.hash(); s.maxRingLag = maxLag; s.unidentifiedMd = eng.unidentified();
+        if (dark) { for (const auto& e : dark->dropCopy()) if (e.execType == ExecType::Fill || e.execType == ExecType::PartialFill) ++s.dropCopyFills;
+                    s.darkFills = dark->fillsFor(uint16_t(RouteStrategy::DarkFirst)); }
+        s.passiveFills = venue.fillsFor(uint16_t(RouteStrategy::PassivePost)); s.postOnlyCancelled = venue.postOnlyCancelled();
+        s.stillResting = venue.restingFor(uint16_t(RouteStrategy::PassivePost)) + (dark ? dark->restingFor(uint16_t(RouteStrategy::DarkFirst)) : 0);
+        s.timersArmed = eng.timersArmed(); s.timersFired = eng.timersFired(); s.escalations = eng.escalatedPlans();
+        s.darkChildren = eng.router().darkChildren(); s.darkDeclined = eng.router().darkDeclined();
         liveStats_ = s; return s;
     }
 
@@ -499,6 +611,12 @@ private:
         l.body.dupWindowMs = cfg_.adversarial ? 50 : 0; submit(&l.header);
         Frame<BuyingPowerUpdate> b; b.init(); b.header.sourceId = 11; b.body.accountIdx = acct; b.body.buyingPower = 1'000'000'000LL * 100'000'000LL; submit(&b.header);
         Frame<LocateGranted> g; g.init(); g.header.sourceId = 10; g.body.locateId = 1; g.body.accountIdx = acct; g.body.symbolIdx = 7; g.body.qty = 1'000'000; g.body.result = LocateResult::Granted; g.body.expiryTs = INT64_MAX; submit(&g.header);
+        if (!cfg_.profile.empty()) {                       // the control plane sets the account's profile (3 in the fixture)
+            Frame<RoutingProfileUpdate> rp; rp.init(); rp.header.sourceId = 13; rp.body.profileId = 3;
+            rp.body.strategy = cfg_.profile == "dark-first" ? RouteStrategy::DarkFirst : cfg_.profile == "passive-post" ? RouteStrategy::PassivePost
+                             : cfg_.profile == "mid-peg" ? RouteStrategy::MidPeg : RouteStrategy::Sweep;
+            submit(&rp.header);
+        }
     }
     static std::vector<std::vector<std::byte>> loadEvents(const std::string& path) {
         std::ifstream in(path, std::ios::binary); std::vector<char> raw((std::istreambuf_iterator<char>(in)), {});

@@ -7,6 +7,12 @@
 // a queue position equal to the displayed quantity at their level on arrival and fill as
 // trades at that price consume the queue ahead of them. Every execution is also recorded
 // on a drop-copy list so the harness can prove the OMS-side reconciliation.
+//
+// A dark venue (an ATS) displays nothing and has no feed. It rests what it is sent and fills it at
+// the midpoint of the lit market when hidden contra flow turns up, which happens on a given share of
+// steps; zero is a pool where nothing ever trades, which is the case a dark strategy's timer exists
+// for. The draws come from the venue's own generator, so they are part of the simulated world and
+// not of anything the replay has to recompute: the journal records what the pool did.
 #pragma once
 #include "book_lite.hpp"
 #include <deque>
@@ -14,6 +20,7 @@
 #include <functional>
 #include <cstring>
 #include <cstdio>
+#include <random>
 
 namespace trading::sim {
 
@@ -22,13 +29,18 @@ public:
     struct Params {
         uint16_t venueId = 2; uint16_t sourceId = 7; uint32_t sessions = 3;
         uint32_t throttlePerSec = 2000; int64_t latencyNs = 12'000;
+        bool dark = false; uint32_t contraPct = 0; uint64_t seed = 1;   // a dark venue, and how often hidden flow meets it
     };
+    // What happened to the children of each strategy (indexed by strategyTag): how many fills, how
+    // many of them added liquidity, and how many printed at the child's own limit.
+    struct StrategyFills { uint64_t fills = 0, added = 0, atLimit = 0; };
     using Emit = std::function<void(FrameHeader*)>;
 
-    explicit VenueSim(Params p, size_t symbols = 4096) : p_(p), book_(symbols), sessions_(p.sessions) {}
+    explicit VenueSim(Params p, size_t symbols = 4096) : p_(p), book_(symbols), sessions_(p.sessions), nbbo_(symbols), rng_(p.seed) {}
 
     // ----- what the venue sees from the market (the harness shows it every md frame)
     void onMd(const FrameHeader* f) {
+        if (auto* n = as<Nbbo>(f)) { if (n->symbolIdx < nbbo_.size()) nbbo_[n->symbolIdx] = {n->bid, n->ask}; return; }
         if (auto* d = as<BookDelta>(f)) {
             if (d->venueId != p_.venueId) return;
             book_.apply(*d);
@@ -73,6 +85,7 @@ public:
         }
         for (const Trade& t : pendingTrades_) tradeFills(t, now, emit);
         pendingTrades_.clear();
+        if (p_.dark) darkFills(now, emit);
         for (size_t i = 0; i < cancels_.size();) {
             if (cancels_[i].dueTs <= now) { cancelChild(cancels_[i].childId, now, emit, 0); cancels_[i] = cancels_.back(); cancels_.pop_back(); }
             else ++i;
@@ -95,11 +108,14 @@ public:
     // ----- introspection
     const std::vector<ExecReport>& dropCopy() const { return dropCopy_; }
     size_t resting() const { return resting_.size(); }
+    size_t restingFor(uint16_t strategyTag) const { size_t n = 0; for (const Rest& r : resting_) n += r.strategyTag == strategyTag; return n; }
     uint64_t fills() const { return fills_; }
     uint64_t acks() const { return acks_; }
     uint64_t rejects() const { return rejects_; }
+    uint64_t postOnlyCancelled() const { return postOnlyCancelled_; }
     uint64_t delayed() const { uint64_t n = 0; for (const auto& s : sessions_) n += s.delayed; return n; }
     const BookLite& book() const { return book_; }
+    const StrategyFills& fillsFor(uint16_t strategyTag) const { static const StrategyFills none{}; return strategyTag < byStrategy_.size() ? byStrategy_[strategyTag] : none; }
 
 private:
     struct Session { bool up = true; int64_t windowTs = 0; uint32_t used = 0, openOrders = 0; uint64_t received = 0, delayed = 0; };
@@ -117,7 +133,7 @@ private:
         }
     };
     struct Rest {
-        uint64_t childId, parentId; uint32_t accountIdx, symbolIdx; Side side; int64_t price, leaves, cum, queueAhead; uint16_t sessionIdx; uint8_t tif; uint64_t childSeq;
+        uint64_t childId, parentId; uint32_t accountIdx, symbolIdx; Side side; int64_t price, leaves, cum, queueAhead; uint16_t sessionIdx; uint8_t tif; uint64_t childSeq; uint16_t strategyTag;
         BookSide bookSide() const { return side == Side::Buy ? BookSide::Bid : BookSide::Ask; }
     };
     struct PendingCancel { uint64_t childId; int64_t dueTs; };
@@ -133,17 +149,23 @@ private:
         ++rejects_; emit(&r.header);
     }
     void rejectChild(const ChildOrder& c, uint32_t why, int64_t now) { deferredRejects_.push_back({c, why, now}); }
-    void exec(const Rest& r, ExecType type, int64_t qty, int64_t px, int64_t now, const Emit& emit, uint16_t reason = 0) {
+    void exec(const Rest& r, ExecType type, int64_t qty, int64_t px, int64_t now, const Emit& emit, uint16_t reason = 0, Liquidity liq = Liquidity::Removed) {
         Frame<ExecReport> e; e.init(); e.header.sourceId = p_.sourceId; e.header.causeSeq = r.childSeq;
         ExecReport& b = e.body;
         b.orderId = r.parentId; b.childOrderId = r.childId; b.accountIdx = r.accountIdx; b.symbolIdx = r.symbolIdx;
         b.execType = type; b.side = r.side; b.venueId = p_.venueId; b.lastQty = qty; b.lastPx = px;
-        b.leavesQty = r.leaves; b.cumQty = r.cum; b.liquidityFlag = type == ExecType::Cancelled ? Liquidity::Unset : Liquidity::Removed;
+        b.leavesQty = r.leaves; b.cumQty = r.cum; b.liquidityFlag = type == ExecType::Cancelled ? Liquidity::Unset : liq;
         b.ordStatus = type == ExecType::Fill ? OrdStatus::Filled : type == ExecType::PartialFill ? OrdStatus::PartiallyFilled : OrdStatus::Cancelled;
         b.execId = (uint64_t(p_.sourceId) << 48) | ++execCounter_; b.rejectReason = reason; b.venueTs = now;
         std::snprintf(b.venueExecId, sizeof b.venueExecId, "SIM%013llu", (unsigned long long)execCounter_);
         dropCopy_.push_back(b);
-        if (type != ExecType::Cancelled) ++fills_;
+        if (type != ExecType::Cancelled) {
+            ++fills_;
+            if (r.strategyTag < byStrategy_.size()) {
+                StrategyFills& sf = byStrategy_[r.strategyTag];
+                ++sf.fills; if (liq == Liquidity::Added) ++sf.added; if (px == r.price) ++sf.atLimit;
+            }
+        }
         emit(&e.header);
     }
     void execCancelled(const Rest& r, int64_t now, const Emit& emit, uint16_t reason) { exec(r, ExecType::Cancelled, 0, 0, now, emit, reason); }
@@ -156,10 +178,15 @@ private:
         (void)now; emit(&st.header);
     }
     void match(const ChildOrder& c, uint64_t childSeq, Session& s, int64_t now, const Emit& emit) {
-        Rest r{c.childOrderId, c.parentOrderId, c.accountIdx, c.symbolIdx, c.side, c.price, c.qty, 0, 0, c.venueSessionIdx, uint8_t(c.tif), childSeq};
+        Rest r{c.childOrderId, c.parentOrderId, c.accountIdx, c.symbolIdx, c.side, c.price, c.qty, 0, 0, c.venueSessionIdx, uint8_t(c.tif), childSeq, c.strategyTag};
         bool buy = c.side == Side::Buy;
         auto& opp = buy ? book_.asks(c.symbolIdx) : book_.bids(c.symbolIdx);
         auto crosses = [&](int64_t lvl) { return c.ordType == OrdType::Market || (buy ? c.price >= lvl : c.price <= lvl); };
+        // Post-only that would take, because the market moved while it was on its way: the venue
+        // cancels it back rather than let it remove liquidity it promised to add.
+        if ((c.orderFlags & OrderFlags::postOnly) && !opp.empty() && crosses(buy ? opp.begin()->first : std::prev(opp.end())->first)) {
+            --s.openOrders; ++postOnlyCancelled_; execCancelled(r, now, emit, 0); return;
+        }
         while (r.leaves > 0 && !opp.empty()) {
             auto it = buy ? opp.begin() : std::prev(opp.end());
             if (!crosses(it->first)) break;
@@ -182,7 +209,27 @@ private:
             if (q <= 0) { ++i; continue; }
             int64_t fill = std::min(q, r.leaves);
             r.leaves -= fill; r.cum += fill;
-            exec(r, r.leaves == 0 ? ExecType::Fill : ExecType::PartialFill, fill, t.price, now, emit);
+            exec(r, r.leaves == 0 ? ExecType::Fill : ExecType::PartialFill, fill, t.price, now, emit, 0, Liquidity::Added);   // it was resting: it added
+            if (r.leaves == 0) { --sessions_[r.sessionIdx].openOrders; resting_[i] = resting_.back(); resting_.pop_back(); }
+            else ++i;
+        }
+    }
+    // Hidden contra flow meeting what rests in the pool, at the midpoint of the lit market and only
+    // inside the order's limit. Resting orders are walked in the order they are held, and every draw
+    // is its own statement, so the same seed gives the same pool on every compiler.
+    void darkFills(int64_t now, const Emit& emit) {
+        for (size_t i = 0; i < resting_.size();) {
+            Rest& r = resting_[i];
+            const uint64_t roll = rng_() % 100;
+            if (roll >= p_.contraPct) { ++i; continue; }
+            const int64_t contra = int64_t(100 * (1 + rng_() % 5));
+            const auto [bid, ask] = r.symbolIdx < nbbo_.size() ? nbbo_[r.symbolIdx] : std::pair<int64_t, int64_t>{0, 0};
+            if (!bid || !ask || bid >= ask) { ++i; continue; }
+            const int64_t mid = (bid + ask) / 2;
+            if (r.side == Side::Buy ? mid > r.price : mid < r.price) { ++i; continue; }
+            const int64_t fill = std::min(contra, r.leaves);
+            r.leaves -= fill; r.cum += fill;
+            exec(r, r.leaves == 0 ? ExecType::Fill : ExecType::PartialFill, fill, mid, now, emit, 0, Liquidity::Added);
             if (r.leaves == 0) { --sessions_[r.sessionIdx].openOrders; resting_[i] = resting_.back(); resting_.pop_back(); }
             else ++i;
         }
@@ -231,7 +278,10 @@ private:
     std::vector<uint64_t> pendingCancelIds_;
     std::vector<DeferredReject> deferredRejects_;
     std::vector<ExecReport> dropCopy_;
-    uint64_t execCounter_ = 0, fills_ = 0, acks_ = 0, rejects_ = 0; int64_t lastStatusTs_ = 0;
+    std::vector<std::pair<int64_t, int64_t>> nbbo_;
+    std::array<StrategyFills, 8> byStrategy_{};
+    std::mt19937_64 rng_;
+    uint64_t execCounter_ = 0, fills_ = 0, acks_ = 0, rejects_ = 0, postOnlyCancelled_ = 0; int64_t lastStatusTs_ = 0;
 };
 
 } // namespace trading::sim

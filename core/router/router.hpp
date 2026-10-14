@@ -174,7 +174,9 @@ public:
         if (leaves <= 0) { out.reason = PlanReason::NoLiquidity; return false; }
         const Profile pr = profileFor(o.accountIdx);
         const bool escalate = escalated_.contains(o.orderId);
-        RouteStrategy st = escalate ? RouteStrategy::Sweep : pr.strategy;
+        // An IOC or FOK parent cannot wait, so a strategy built on waiting does not apply to it.
+        const bool immediate = o.tif == Tif::Ioc || o.tif == Tif::Fok;
+        RouteStrategy st = escalate || immediate ? RouteStrategy::Sweep : pr.strategy;
         bool declinedDark = false;
         if (st == RouteStrategy::DarkFirst && !(o.orderFlags & OrderFlags::allowDark)) {
             st = RouteStrategy::Sweep;
@@ -482,6 +484,9 @@ inline bool Router::sweep(const NewOrder& o, int64_t leaves, int64_t now, Plan& 
         int64_t bestCost = 0;
         bool have = false;
         for (uint16_t v = 1; v <= p_.maxVenueId && v < MAX_VENUES; ++v) {
+            // The remainder is a displayed quote at the limit, so not a dark venue, and the client's
+            // instructions hold here exactly as they do in every other strategy.
+            if (isDark(v) || !allowed(o, v)) continue;
             uint16_t s = 0;
             if (!pickSession(v, s)) continue;
             const int64_t fallback = netPerShare(v, o.side, limit, Liquidity::Added) + missPenaltyPerShare(limit);

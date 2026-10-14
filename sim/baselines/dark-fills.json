@@ -1,0 +1,17 @@
+{
+  "scenario": "dark-fills",
+  "seed": 7,
+  "steps": 6000,
+  "orders": 3731,
+  "accepted": 3368,
+  "rejected": 363,
+  "fills": 3313,
+  "cancelled": 1124,
+  "children": 4439,
+  "reroutes": 877,
+  "checkpoints": 36,
+  "coreSeq": 71516,
+  "mdSeq": 16775,
+  "verified": 33219,
+  "finalHash": "d79e2ac8509d1389b8aafd237fba6baecbca8d98e39acaa13d0e2a8046d0104f"
+}

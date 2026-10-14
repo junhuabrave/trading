@@ -10,7 +10,7 @@ namespace trading::sim {
 
 class ClientSim {
 public:
-    struct Params { uint32_t accountIdx = 42; uint16_t sourceId = 2; uint32_t sessionId = 9; uint32_t symbols = 10; bool adversarial = false; int shortPct = 15; int cancelPct = 30; int replacePct = 8; };
+    struct Params { uint32_t accountIdx = 42; uint16_t sourceId = 2; uint32_t sessionId = 9; uint32_t symbols = 10; bool adversarial = false; int shortPct = 15; int cancelPct = 30; int replacePct = 8; int allowDarkPct = 0; };
     ClientSim(Params p, uint64_t seed) : p_(p), rng_(seed) {}
 
     // Produce one client action for this step. midOf(sym) gives the current mid. emit(frame) sequences it.
@@ -51,6 +51,10 @@ public:
         if (p_.adversarial && rng_() % 30 == 0) b.qty = 0;
         if (p_.adversarial && rng_() % 40 == 0) b.price = mid * 2;                                        // collar
         b.clientTag = orders_;
+        if (p_.allowDarkPct > 0) {                                                                        // no draw at all when off, so other scenarios are unchanged
+            const int dark = int(rng_() % 100);
+            if (dark < p_.allowDarkPct) b.orderFlags = uint8_t(b.orderFlags | OrderFlags::allowDark);
+        }
         live_.push_back(b.orderId);
         if (live_.size() > 400) { live_[rng_() % live_.size()] = live_.back(); live_.pop_back(); }
         emit(&o.header);

@@ -4,6 +4,7 @@
 //   run_sim <snapshot> <workdir> [--scenario NAME] [--seed N] [--steps N] [--adversarial]
 //           [--drill kill|session-drop|rate-burst|torn-tail] [--events FILE]
 //           [--baseline FILE] [--write-baseline FILE]
+//           [--profile dark-first|passive-post|mid-peg] [--dark-venue CONTRA_PCT] [--allow-dark PCT]
 #include "harness.hpp"
 #include "bench.hpp"
 #include <cstring>
@@ -39,6 +40,8 @@ int main(int argc, char** argv) {
         else if (a == "--baseline") baseline = next(); else if (a == "--write-baseline") writeBaseline = next();
         else if (a == "--sessions") c.sessions = uint32_t(std::stoul(next())); else if (a == "--throttle") c.throttlePerSec = uint32_t(std::stoul(next()));
         else if (a == "--bench") c.benchMode = true;
+        else if (a == "--profile") c.profile = next(); else if (a == "--dark-venue") c.darkContraPct = std::stoi(next());
+        else if (a == "--allow-dark") c.allowDarkPct = std::stoi(next());
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     Harness h(c);
@@ -71,6 +74,37 @@ int main(int argc, char** argv) {
     if (s.stranded) { std::printf("FAIL: %llu parents left with leaves and no plan\n", (unsigned long long)s.stranded); rc = 1; }
     if (c.drill == "kill" && s.rejected == 0) { std::printf("FAIL: kill drill rejected nothing\n"); rc = 1; }
     if (c.drill == "rate-burst" && s.rejected == 0) { std::printf("FAIL: rate burst rejected nothing\n"); rc = 1; }
+
+    // The resting strategies. Each one has to have actually rested, its timer has to have been a
+    // sequenced message that went off, and what it got has to be what the strategy is for.
+    if (!c.profile.empty()) {
+        std::printf("  timers armed %llu, fired %llu, plans that crossed because the wait ran out %llu\n",
+                    (unsigned long long)s.timersArmed, (unsigned long long)s.timersFired, (unsigned long long)s.escalations);
+        if (s.timersFired == 0 || s.escalations == 0) { std::printf("FAIL: no resting plan ran out of time and crossed\n"); rc = 1; }
+        // A wait that ran out has to end the wait: whatever is still resting at the close is at most
+        // what the timers not yet due are holding. More than that is a child the timer left behind.
+        std::printf("  resting at the close %llu, timers not yet due %llu\n", (unsigned long long)s.stillResting, (unsigned long long)(s.timersArmed - s.timersFired));
+        if (s.stillResting > s.timersArmed - s.timersFired) { std::printf("FAIL: children still resting after their timer went off\n"); rc = 1; }
+    }
+    if (c.profile == "dark-first") {
+        std::printf("  dark children %llu, declined for want of allowDark %llu, dark fills %llu (all added liquidity: %s)\n",
+                    (unsigned long long)s.darkChildren, (unsigned long long)s.darkDeclined, (unsigned long long)s.darkFills.fills,
+                    s.darkFills.added == s.darkFills.fills ? "yes" : "NO");
+        if (s.darkChildren == 0) { std::printf("FAIL: nothing went dark\n"); rc = 1; }
+        if (c.allowDarkPct < 100 && s.darkDeclined == 0) { std::printf("FAIL: no order without allowDark was kept out of the dark\n"); rc = 1; }
+        if (c.darkContraPct > 0 && s.darkFills.fills == 0) { std::printf("FAIL: a pool with contra flow filled nothing\n"); rc = 1; }
+        if (c.darkContraPct == 0 && s.darkFills.fills != 0) { std::printf("FAIL: a pool with no contra flow filled something\n"); rc = 1; }
+        if (s.darkFills.added != s.darkFills.fills) { std::printf("FAIL: a dark fill removed liquidity\n"); rc = 1; }
+    }
+    if (c.profile == "passive-post") {
+        // A post joins the queue at its own price and is filled by flow arriving at it: every fill
+        // adds liquidity, earning the rebate the strategy chose the venue for, at the child's price.
+        std::printf("  passive fills %llu, added liquidity %llu, at the posted price %llu; posts cancelled back for crossing on arrival %llu\n",
+                    (unsigned long long)s.passiveFills.fills, (unsigned long long)s.passiveFills.added, (unsigned long long)s.passiveFills.atLimit,
+                    (unsigned long long)s.postOnlyCancelled);
+        if (s.passiveFills.fills == 0) { std::printf("FAIL: no passive post filled\n"); rc = 1; }
+        if (s.passiveFills.added != s.passiveFills.fills || s.passiveFills.atLimit != s.passiveFills.fills) { std::printf("FAIL: a passive post took liquidity or printed away from its price\n"); rc = 1; }
+    }
 
     Harness::VerifyResult v = h.verify();
     std::printf("cold replay: %llu frames, %llu decisions/routes/acks verified, %llu mismatches, %llu checkpoints, hash %s %s\n",

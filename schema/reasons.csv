@@ -33,3 +33,4 @@ code,name,family,description
 141,UnknownOrder,session,cancel or replace for an order we do not know
 142,OrderNotLive,session,order is not in a live state
 150,RerouteRequired,order,parent has leaves and no live child; the router must plan again
+151,StrategyTimer,order,a resting strategy ran out of time; the OMS cancels its children and the router plans again

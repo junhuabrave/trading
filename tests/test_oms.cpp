@@ -164,7 +164,24 @@ int main(int argc, char** argv) {
     uint64_t o7 = d.newOrder(AAPL, Side::Buy, 100, px, Tif::Ioc); d.risk(o7, true); uint64_t c7 = d.child(o7, 100, px, 0, Tif::Ioc); d.ack(c7);
     d.venueExec(o7, c7, ExecType::Cancelled, 0, 0);
     { auto* r = log.last<ExecReport>(); CHECK(r && r->execType == ExecType::Cancelled); } CHECK(oms.find(o7) == nullptr);
-    std::printf("re-route, give-up, ioc paths ok\n");
+    // a resting strategy's timer: the router asks, the OMS cancels the resting child, and the venue's
+    // confirmation is an ordinary re-route with the fill already booked kept
+    auto strategyTimer = [&](uint64_t parent) {
+        Frame<OrderState> f; f.init(); f.header.sourceId = 3; f.body.orderId = parent; f.body.reason = uint16_t(Reason::StrategyTimer); log.push(&f.header);
+    };
+    uint64_t o7b = d.newOrder(AAPL, Side::Buy, 300, px); d.risk(o7b, true); uint64_t c7b = d.child(o7b, 300, px); d.ack(c7b);
+    d.venueExec(o7b, c7b, ExecType::PartialFill, 100, px, Liquidity::Added);
+    { size_t before = log.count<CancelOrder>(); strategyTimer(o7b);
+      auto* k = log.last<CancelOrder>(); CHECK(log.count<CancelOrder>() == before + 1 && k && k->orderId == c7b && log.lastHeader()->sourceId == 4); }
+    CHECK(oms.find(o7b)->status == PF);                                         // the parent is not being cancelled; only its child is
+    d.venueExec(o7b, c7b, ExecType::Cancelled, 0, 0);
+    { auto* s = log.last<OrderState>(); CHECK(s && s->orderId == o7b && s->reason == uint16_t(Reason::RerouteRequired) && s->leavesQty == 200 && s->cumQty == 100); }
+    // a timer that arrives after the parent moved on does nothing: re-routing already, and gone
+    { size_t before = log.count<CancelOrder>(); strategyTimer(o7b); CHECK(log.count<CancelOrder>() == before); }
+    { uint64_t c = d.child(o7b, 200, px); d.ack(c); d.venueExec(o7b, c, ExecType::Fill, 200, px); }
+    CHECK(oms.find(o7b) == nullptr);
+    { size_t before = log.outputs.size(); strategyTimer(o7b); CHECK(log.outputs.size() == before); }
+    std::printf("re-route, give-up, ioc, strategy timer paths ok\n");
 
     // ---- replace: pending, accepted (children cancelled, re-planned at the new shape), rejected (back to Live)
     uint64_t o8 = d.newOrder(AAPL, Side::Buy, 100, px); d.risk(o8, true); uint64_t c8 = d.child(o8, 100, px); d.ack(c8);
