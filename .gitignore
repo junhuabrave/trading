@@ -5,3 +5,4 @@ gen/go/
 gen/layout.md
 __pycache__/
 *.tampered
+.amp/portals/*

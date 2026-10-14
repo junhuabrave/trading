@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Orb setup: installs the toolchain CI uses so `make test`, `make fuzz` and `make gotest` work.
+# Debian 12's g++ 12 lacks <print>, so C++ builds use clang 18 with libc++ (as CI's clang job does).
+# Idempotent and non-interactive; a warm run should download nothing.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+LLVM_VERSION=18
+GO_VERSION=1.22.12
+
+step() { echo "== [$(date +%T)] $*"; }
+SECONDS=0
+
+# --- clang 18, libc++, libFuzzer/sanitizer runtimes, strace (benchgate) -------------------------
+llvm_pkgs=(clang-$LLVM_VERSION libc++-$LLVM_VERSION-dev libc++abi-$LLVM_VERSION-dev libclang-rt-$LLVM_VERSION-dev)
+apt_pkgs=(make strace "${llvm_pkgs[@]}")
+missing=()
+for p in "${apt_pkgs[@]}"; do
+  dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || missing+=("$p")
+done
+if ((${#missing[@]})); then
+  step "apt: installing ${missing[*]}"
+  if [ ! -f /etc/apt/sources.list.d/llvm.list ]; then
+    curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor --yes -o /usr/share/keyrings/llvm.gpg
+    echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-$LLVM_VERSION main" \
+      | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+  fi
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}"
+else
+  step "apt: packages already installed"
+fi
+
+# --- Go (tests/go, make gotest) -------------------------------------------------------------------
+if [ "$(/usr/local/go/bin/go env GOVERSION 2>/dev/null || true)" != "go$GO_VERSION" ]; then
+  step "go: installing $GO_VERSION"
+  curl -fsSL "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz" -o /tmp/go.tgz
+  sudo rm -rf /usr/local/go
+  sudo tar -C /usr/local -xzf /tmp/go.tgz
+  rm -f /tmp/go.tgz
+else
+  step "go: $GO_VERSION already installed"
+fi
+
+# --- Python blake3 (snapshot tools) ---------------------------------------------------------------
+if python3 -c 'import blake3' 2>/dev/null; then
+  step "python: blake3 already installed"
+else
+  step "python: installing blake3"
+  python3 -m pip install --quiet --disable-pip-version-check blake3
+fi
+
+# --- Login-shell environment: default the Makefile to clang 18 + libc++, put Go on PATH ----------
+profile_marker="# trading repo toolchain (.agents/setup)"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+  step "profile: adding toolchain exports to ~/.bash_profile"
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$profile_marker
+case ":\$PATH:" in *:/usr/local/go/bin:*) ;; *) export PATH="\$PATH:/usr/local/go/bin" ;; esac
+export CXX=clang++-$LLVM_VERSION CC=clang-$LLVM_VERSION
+export CXXFLAGS="-std=c++23 -O2 -stdlib=libc++ -Wall -Wextra -Werror -pedantic"
+EOF
+fi
+
+agents_marker="<!-- trading repo toolchain (.agents/setup) -->"
+if ! grep -Fqx "$agents_marker" "$HOME/.config/amp/AGENTS.md" 2>/dev/null; then
+  mkdir -p "$HOME/.config/amp"
+  cat >> "$HOME/.config/amp/AGENTS.md" <<EOF
+
+$agents_marker
+# Trading repo toolchain in this orb
+
+- Debian 12's g++ is 12 and lacks \`<print>\`; build with clang $LLVM_VERSION and libc++.
+- Login shells export \`CXX=clang++-$LLVM_VERSION CC=clang-$LLVM_VERSION CXXFLAGS="-std=c++23 -O2 -stdlib=libc++ -Wall -Wextra -Werror -pedantic"\`, so plain \`make test\` works. In a non-login shell pass them explicitly.
+- Go $GO_VERSION is in \`/usr/local/go/bin\` (\`make gotest\`). \`make fuzz\` works with the exported \`CXX\`.
+EOF
+fi
+
+step "done in ${SECONDS}s"
