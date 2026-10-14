@@ -156,7 +156,16 @@ touch. A plan that waits arms a sequenced `Timer`; when it fires, the router sen
 `OrderState` with reason `StrategyTimer`, the OMS cancels the resting child, and the ordinary
 re-route plans it again to cross. Each run checks that nothing is left resting once its timer has
 gone off, that dark and passive fills add liquidity, and that a post-only child which would cross on
-arrival is cancelled back by the venue rather than allowed to take. Each scenario has a stored baseline
+arrival is cancelled back by the venue rather than allowed to take. `--venues 2` adds Cboe BZX as a
+second lit venue with its own feed, journal and book, so sweeps split across venues, and measures
+how far apart the children of one plan land: within the wire's 2 us of jitter, against about 16 us
+had they all left at once. The router takes each venue's latency from a `VenueScorecard` when TCA
+has measured one and from the registry otherwise, and the simulated gateway holds each child by its
+offset within its batch from the moment it receives it. Holding until the absolute `releaseTs`
+instead releases nothing on time whenever the engine takes longer than the offset to sequence the
+batch, which is the venue gateways' (VG-1) problem to avoid too. With two feeds the engine's NBBO is
+the one its own book consolidates and the risk engine's last sale is the latest by venue time, so
+nothing depends on the order in which feeds happened to be read. Each scenario has a stored baseline
 (counts and final hash); `make test` fails on any drift and `make baselines` regenerates them after a
 reviewed change.
 
@@ -217,6 +226,6 @@ The design puts transport and archive on Aeron. `BroadcastRing` and `Journal` ha
 
 ## Next (v0.3, see docs/03)
 
-1. `core/router`: RT-8's arrival-spread measurement, which needs a second lit venue with its own feed in the simulator; RT-7 waits for the venue gateways and RT-10 for the position keeper.
+1. `core/router`: RT-7 waits for the venue gateways and RT-10 for the position keeper; everything else on the track is in.
 2. `core/md`: BookSnapshot late-joiner recovery proved by hash (MD-9), the vendor feed adapter (MD-12), and the golden run against a published Nasdaq sample day.
 3. OMS: Day expiry through sequenced timers, GTC carry, venue-side replace once a venue protocol supports it.

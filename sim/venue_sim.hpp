@@ -30,7 +30,12 @@ public:
         uint16_t venueId = 2; uint16_t sourceId = 7; uint32_t sessions = 3;
         uint32_t throttlePerSec = 2000; int64_t latencyNs = 12'000;
         bool dark = false; uint32_t contraPct = 0; uint64_t seed = 1;   // a dark venue, and how often hidden flow meets it
+        int64_t latencyJitterNs = 0;   // each child's one-way latency is latencyNs plus up to this much
     };
+    // When a child reached the venue, and how long its gateway held it first, keyed by the plan it
+    // belongs to (the ChildOrder's causeSeq), so the harness can measure how far apart the children
+    // of one plan landed across venues.
+    struct ArrivalRec { uint64_t cause; int64_t arriveTs, holdNs; };
     // What happened to the children of each strategy (indexed by strategyTag): how many fills, how
     // many of them added liquidity, and how many printed at the child's own limit.
     struct StrategyFills { uint64_t fills = 0, added = 0, atLimit = 0; };
@@ -55,11 +60,15 @@ public:
     // ----- what the venue sees from us (its session workers): children and cancels
     void onCore(const FrameHeader* f, int64_t now) {
         if (auto* c = as<ChildOrder>(f)) {
+            // Every child of a plan, whichever venue it is for: the plan's earliest release is the
+            // reference this venue's hold is measured from.
+            bool seen = false;
+            for (auto& [cause, first] : batchRelease_) if (cause == f->causeSeq) { first = std::min(first, c->releaseTs); seen = true; }
+            if (!seen) batchRelease_.push_back({f->causeSeq, c->releaseTs});
             if (c->venueId != p_.venueId) return;
             if (c->venueSessionIdx >= sessions_.size() || !sessions_[c->venueSessionIdx].up) { rejectChild(*c, 1, now); return; }
-            Arrival a; a.child = *c; a.childSeq = f->seq;
-            a.arriveTs = (c->releaseTs > now ? c->releaseTs : now) + p_.latencyNs;
-            arrivals_.push(a);
+            Arrival a; a.child = *c; a.childSeq = f->seq; a.cause = f->causeSeq;
+            admitting_.push_back(a);
         } else if (auto* c = as<CancelOrder>(f)) {
             if (f->sourceId != 4) return;                                   // only the OMS addresses children; orderId is the childOrderId
             cancels_.push_back({c->orderId, now + p_.latencyNs});
@@ -68,6 +77,7 @@ public:
 
     // ----- advance to `now`: deliver arrivals, apply trades to resting orders, run cancels
     void process(int64_t now, const Emit& emit) {
+        admit(now);
         // sessions refill their throttle every second
         for (auto& s : sessions_) if (now - s.windowTs >= 1'000'000'000LL) { s.windowTs = now - (now % 1'000'000'000LL); s.used = 0; }
         while (!arrivals_.empty() && arrivals_.top().arriveTs <= now) {
@@ -107,6 +117,7 @@ public:
 
     // ----- introspection
     const std::vector<ExecReport>& dropCopy() const { return dropCopy_; }
+    const std::vector<ArrivalRec>& arrivalsLog() const { return arrivalLog_; }
     size_t resting() const { return resting_.size(); }
     size_t restingFor(uint16_t strategyTag) const { size_t n = 0; for (const Rest& r : resting_) n += r.strategyTag == strategyTag; return n; }
     uint64_t fills() const { return fills_; }
@@ -126,7 +137,7 @@ private:
     // multi-venue plan. Sending order is also the right answer - a venue receives what a session
     // sent it in the order it was sent.
     struct Arrival {
-        ChildOrder child; int64_t arriveTs; uint64_t childSeq;
+        ChildOrder child; int64_t arriveTs; uint64_t childSeq; uint64_t cause = 0;
         bool operator>(const Arrival& o) const {
             if (arriveTs != o.arriveTs) return arriveTs > o.arriveTs;
             return childSeq > o.childSeq;
@@ -245,6 +256,7 @@ private:
 public:
     // deferred rejects (from onCore, which has no emit) and in-flight cancels are flushed here
     void flush(int64_t now, const Emit& emit) {
+        admit(now);
         for (auto& d : deferredRejects_) rejectChild(d.child, d.why, now, emit);
         deferredRejects_.clear();
         if (!pendingCancelIds_.empty()) {
@@ -261,6 +273,27 @@ public:
         }
     }
 private:
+    // The gateway's release. The router stamps each child with the time it should leave so that the
+    // children of one plan land together, which is the decision time plus the child's offset. A
+    // gateway that waited for that absolute time would release nothing on time whenever the engine
+    // took longer than the offset to put the batch on the stream - in this harness a whole step,
+    // in production the microseconds between decision and wire, which are the same size as the
+    // offsets. So it holds each child by its offset within its batch, measured from the earliest
+    // release in the batch, from the moment it receives it. Then the child flies.
+    void admit(int64_t now) {
+        for (Arrival& a : admitting_) {
+            int64_t first = a.child.releaseTs;
+            for (const auto& [cause, r] : batchRelease_) if (cause == a.cause) first = r;
+            const int64_t hold = a.child.releaseTs - first;
+            int64_t jitter = 0;
+            if (p_.latencyJitterNs > 0) jitter = int64_t(rng_() % uint64_t(p_.latencyJitterNs + 1));
+            a.arriveTs = now + hold + p_.latencyNs + jitter;
+            arrivals_.push(a);
+            arrivalLog_.push_back({a.cause, a.arriveTs, hold});
+        }
+        admitting_.clear();
+        batchRelease_.clear();
+    }
     bool inFlight(uint64_t childId) const {
         std::priority_queue<Arrival, std::vector<Arrival>, std::greater<Arrival>> copy = arrivals_;
         while (!copy.empty()) { if (copy.top().child.childOrderId == childId) return true; copy.pop(); }
@@ -279,6 +312,9 @@ private:
     std::vector<DeferredReject> deferredRejects_;
     std::vector<ExecReport> dropCopy_;
     std::vector<std::pair<int64_t, int64_t>> nbbo_;
+    std::vector<Arrival> admitting_;                                  // children received, not yet released
+    std::vector<std::pair<uint64_t, int64_t>> batchRelease_;         // plan (cause seq) -> its earliest releaseTs
+    std::vector<ArrivalRec> arrivalLog_;
     std::array<StrategyFills, 8> byStrategy_{};
     std::mt19937_64 rng_;
     uint64_t execCounter_ = 0, fills_ = 0, acks_ = 0, rejects_ = 0, postOnlyCancelled_ = 0; int64_t lastStatusTs_ = 0;

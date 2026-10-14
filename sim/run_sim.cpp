@@ -4,7 +4,7 @@
 //   run_sim <snapshot> <workdir> [--scenario NAME] [--seed N] [--steps N] [--adversarial]
 //           [--drill kill|session-drop|rate-burst|torn-tail] [--events FILE]
 //           [--baseline FILE] [--write-baseline FILE]
-//           [--profile dark-first|passive-post|mid-peg] [--dark-venue CONTRA_PCT] [--allow-dark PCT]
+//           [--profile dark-first|passive-post|mid-peg] [--dark-venue CONTRA_PCT] [--allow-dark PCT] [--venues 1|2]
 #include "harness.hpp"
 #include "bench.hpp"
 #include <cstring>
@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
         else if (a == "--bench") c.benchMode = true;
         else if (a == "--profile") c.profile = next(); else if (a == "--dark-venue") c.darkContraPct = std::stoi(next());
         else if (a == "--allow-dark") c.allowDarkPct = std::stoi(next());
+        else if (a == "--venues") c.litVenues = uint32_t(std::stoul(next()));
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     Harness h(c);
@@ -75,6 +76,15 @@ int main(int argc, char** argv) {
     if (c.drill == "kill" && s.rejected == 0) { std::printf("FAIL: kill drill rejected nothing\n"); rc = 1; }
     if (c.drill == "rate-burst" && s.rejected == 0) { std::printf("FAIL: rate burst rejected nothing\n"); rc = 1; }
 
+    // RT-8: the children of one plan land together. The bound is the wire's jitter, which no offset
+    // can remove; without the offsets they would land the difference in latency apart.
+    if (c.litVenues >= 2) {
+        std::printf("  plans across both lit venues %llu: arrival spread p50 %lld ns, max %lld ns (bound %lld); released all at once it would be p50 %lld, max %lld\n",
+                    (unsigned long long)s.multiVenuePlans, (long long)s.spreadP50, (long long)s.spreadMax, (long long)LATENCY_JITTER_NS,
+                    (long long)s.unheldSpreadP50, (long long)s.unheldSpreadMax);
+        if (s.multiVenuePlans == 0) { std::printf("FAIL: no plan used both lit venues\n"); rc = 1; }
+        if (s.spreadMax > LATENCY_JITTER_NS) { std::printf("FAIL: children of one plan landed further apart than the jitter\n"); rc = 1; }
+    }
     // The resting strategies. Each one has to have actually rested, its timer has to have been a
     // sequenced message that went off, and what it got has to be what the strategy is for.
     if (!c.profile.empty()) {

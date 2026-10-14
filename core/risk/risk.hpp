@@ -58,7 +58,7 @@ public:
     explicit RiskEngine(RefData& rd, size_t expectedOrders = 1 << 20, size_t expectedOpen = 1 << 16)
         : rd_(rd), accounts_(MAX_ACCOUNTS), symbolLimits_(4096), openOrders_(expectedOpen), positions_(1 << 16),
           locates_(1 << 16), clOrdIds_(expectedOrders),
-          bid_(MAX_SYMBOLS, 0), ask_(MAX_SYMBOLS, 0), lastTrade_(MAX_SYMBOLS, 0), halted_(MAX_SYMBOLS, 0), strategyKilled_(65536, 0) {
+          bid_(MAX_SYMBOLS, 0), ask_(MAX_SYMBOLS, 0), lastTrade_(MAX_SYMBOLS, 0), lastTradeTs_(MAX_SYMBOLS, 0), lastTradeVenue_(MAX_SYMBOLS, 0), halted_(MAX_SYMBOLS, 0), strategyKilled_(65536, 0) {
         // margin requirement per marginClass, in bps of notional: 0 unused, 1 Reg T 50%, 2 100%, 3 100% (new issue / low priced), 4 30% (portfolio)
         marginBps_ = {0, 5000, 10000, 10000, 3000, 10000, 10000, 10000};
     }
@@ -98,7 +98,7 @@ public:
         }
         if (auto* m = as<LocateExpired>(h)) { locates_.erase(m->locateId); return true; }
         if (auto* m = as<Nbbo>(h)) { if (m->symbolIdx < MAX_SYMBOLS) { bid_[m->symbolIdx] = m->bid; ask_[m->symbolIdx] = m->ask; } return true; }
-        if (auto* m = as<Trade>(h)) { if (m->symbolIdx < MAX_SYMBOLS) lastTrade_[m->symbolIdx] = m->price; return true; }
+        if (auto* m = as<Trade>(h)) { if (m->symbolIdx < MAX_SYMBOLS) onTrade(*m); return true; }
         if (auto* m = as<SymbolStatus>(h)) {
             if (m->symbolIdx < MAX_SYMBOLS && (m->venueId == 0 || m->venueId == primaryVenue(m->symbolIdx)))
                 halted_[m->symbolIdx] = (m->status == TradingStatus::Halted || m->status == TradingStatus::Paused) ? 1 : 0;
@@ -196,6 +196,17 @@ private:
     static uint64_t clKey(const NewOrder& o) noexcept { return util::FlatSet64::fingerprint(Key128{(uint64_t(o.accountIdx) << 32) | o.sessionId, o.clOrdId}); }
     uint16_t primaryVenue(uint32_t) const noexcept { return 0; }   // SymbolStatus with venueId 0 is the consolidated status
     int64_t referencePrice(uint32_t s) const noexcept { return lastTrade_[s] ? lastTrade_[s] : rd_.refPrice(s); }
+    // The last sale is the latest by the venue's own clock, ties going to the higher venue id, and
+    // not the last one read. With one feed they are the same thing. With several, the order in
+    // which an engine happens to read them is not on the log - only how far it had read each one
+    // is - so a reference price that depended on it could not be recomputed in replay.
+    void onTrade(const Trade& m) noexcept {
+        const uint32_t s = m.symbolIdx;
+        const bool later = m.venueTs > lastTradeTs_[s]
+                        || (m.venueTs == lastTradeTs_[s] && m.venueId >= lastTradeVenue_[s]);
+        if (!later) return;
+        lastTrade_[s] = m.price; lastTradeTs_[s] = m.venueTs; lastTradeVenue_[s] = m.venueId;
+    }
     int64_t requirement(uint32_t s, int64_t notional) const noexcept {
         uint8_t mc = rd_.marginClass(s); if (mc >= marginBps_.size()) mc = 2;
         return int64_t(i128(notional) * marginBps_[mc] / BPS);   // wide: notional x bps overflows int64 near the ceiling
@@ -421,7 +432,8 @@ private:
     FlatMap<uint64_t, Locate> locates_;
     util::FlatSet64 clOrdIds_;
     std::array<int64_t, 8> marginBps_{};
-    std::vector<int64_t> bid_, ask_, lastTrade_;
+    std::vector<int64_t> bid_, ask_, lastTrade_, lastTradeTs_;
+    std::vector<uint16_t> lastTradeVenue_;
     std::vector<uint8_t> halted_;
     std::vector<uint8_t> strategyKilled_;
     bool firmKilled_ = false;

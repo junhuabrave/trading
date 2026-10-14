@@ -33,6 +33,15 @@ using namespace trading::risk;
 // market-data stream is one feed, so the stream id and the feed id are the same number by
 // construction rather than by coincidence.
 inline constexpr uint32_t FEED_XNAS_ITCH = 1;
+// The second lit venue, when a scenario asks for one: Cboe BZX, feedId 3 in the registry. Its feed
+// is generated as ITCH 5.0 because that is the decoder we have; PITCH has the same shape (adds,
+// executes, cancels against an order reference) and only the byte layout differs.
+inline constexpr uint32_t FEED_BATS = 3;
+// What the wire to Cboe BZX actually costs in the simulator, as opposed to the registry's 21 us, and
+// how much it varies from one child to the next. RT-8's stated bound on arrival spread is the jitter:
+// offsets from the measured latency can remove the difference between venues, not the noise.
+inline constexpr int64_t BATS_TRUE_LATENCY_NS = 27'000;
+inline constexpr int64_t LATENCY_JITTER_NS = 2'000;
 // ITCH stamps nanoseconds since the venue day's midnight; this is that midnight, so every venueTs
 // the harness sees is an ordinary epoch timestamp.
 inline constexpr int64_t SESSION_MIDNIGHT_NS = 1'757'894'400'000'000'000LL;
@@ -49,6 +58,7 @@ struct Config {
     // which hidden contra flow meets what rests there. Negative means no dark venue at all.
     int darkContraPct = -1;
     int allowDarkPct = 0;            // share of client orders that permit dark routing
+    uint32_t litVenues = 1;          // 1: Nasdaq only; 2: Nasdaq and Cboe BZX, each with its own feed and journal
 };
 
 struct Stats {
@@ -59,6 +69,10 @@ struct Stats {
     uint64_t maxRingLag = 0, unidentifiedMd = 0;
     uint64_t timersArmed = 0, timersFired = 0, escalations = 0, darkChildren = 0, darkDeclined = 0, postOnlyCancelled = 0, stillResting = 0;
     VenueSim::StrategyFills darkFills{}, passiveFills{};
+    // Plans whose children went to more than one lit venue, and how far apart those children landed:
+    // as released, and as they would have landed had every child left at once.
+    uint64_t multiVenuePlans = 0;
+    int64_t spreadP50 = 0, spreadMax = 0, unheldSpreadP50 = 0, unheldSpreadMax = 0;
 };
 
 inline std::string hex(const std::array<uint8_t, 32>& h, size_t n = 32) { std::string s; char b[3]; for (size_t i = 0; i < n; ++i) { std::snprintf(b, 3, "%02x", h[i]); s += b; } return s; }
@@ -73,20 +87,23 @@ public:
     // make the same plans in the same order.
     struct Arm { uint32_t timerId; int64_t fireTs; };
 
-    Engine(const Snapshot& snap, uint32_t sessions, Mode mode, const Journal* mdJournal = nullptr, uint16_t sourceId = 3)
+    Engine(const Snapshot& snap, uint32_t sessions, Mode mode, uint16_t sourceId = 3)
         : mode_(mode), src_(sourceId), risk_(rd_), oms_(4, 1 << 18),
           bookMem_(md::BookSegment::bytesFor(uint32_t(snap.instruments().size()) + 1, BOOK_MAX_VENUE)),
           book_(rd_, bookParams(snap), bookMem_.data()),
           bookReader_(bookMem_.data(), uint32_t(snap.instruments().size()) + 1, BOOK_MAX_VENUE),
-          router_(snap, routerParams(sessions)),
-          mdJournal_(mdJournal) {
+          router_(snap, routerParams(sessions)) {
         rd_.load(snap); risk_.load(snap); oms_.load(snap); std::memcpy(snapHash_.data(), snap.contentHash().data(), 32);
         router_.setBook(&bookReader_);
     }
 
     // Verify mode: md target per cause seq, pre-scanned from the journal, so a decision is
     // evaluated at the same point (and on the same market data) as the live engine did.
-    void setWatermarkIndex(const std::vector<std::pair<uint64_t, uint64_t>>* idx) { wmIndex_ = idx; }
+    // One entry per (cause seq, feed): the venue sequence of that feed the live engine had read.
+    struct WmEntry { uint64_t cause; uint32_t feedId; uint64_t venueSeq; auto operator<=>(const WmEntry&) const = default; };
+    void setWatermarkIndex(const std::vector<WmEntry>* idx) { wmIndex_ = idx; }
+    // Verify mode: each feed's own journal, which is replayed to that feed's watermark and no further.
+    void addMdJournal(uint32_t feedId, const Journal* j) { md_.push_back({feedId, j, 0}); }
 
     // ----- inputs
     void onMd(const FrameHeader* f) {
@@ -94,13 +111,20 @@ public:
         // builder's shared view is unavailable - in production the router reads exactly that - but
         // because a replay has to reconstruct the book the live engine saw from the journal alone,
         // and the only way to be sure it did is to build it the same way both times.
-        book_.apply(f, 0, [](const FrameHeader*) {});
-        if (auto* n = as<Nbbo>(f)) oms_.onNbbo(*n);        // the NBBO on every client report
-        risk_.apply(f);                                     // Trade and Nbbo feed reference prices and the SSR bid
+        //
+        // The NBBO the OMS puts on client reports and the risk engine uses for the SSR bid is the
+        // one this book consolidates across venues, not the Nbbo frames a feed handler publishes:
+        // each of those knows only its own venue, and which feed's arrived last is an accident of
+        // reading order that the journal does not record. The book's, read at a watermark, is a
+        // function of how far each feed had been read, which is what replay reproduces.
+        book_.apply(f, 0, [this](const FrameHeader* g) {
+            if (auto* n = as<Nbbo>(g)) { oms_.onNbbo(*n); risk_.apply(g); }
+        });
+        if (!as<Nbbo>(f)) risk_.apply(f);                   // Trade feeds the reference price, SymbolStatus halts
         md::Identity id = md::identity(f);
         if (id.venueSeq == 0) ++unidentified_;              // a market-data frame nothing can replay to
         wm_.observe(id.feedId, id.venueSeq);                // (feedId, venueSeq), never a sequence of ours
-        mdCursor_ = f->seq;                                 // how far we have read in the journal; an implementation detail
+        for (MdSource& m : md_) if (m.feedId == f->streamId) m.cursor = f->seq;   // how far we have read that feed's journal
     }
     void onCore(const FrameHeader* f) {
         if (auto* ss = as<SessionStart>(f)) { if (std::memcmp(ss->snapshotHash.data(), snapHash_.data(), 32) != 0) throw std::runtime_error("engine: snapshot hash mismatch at SessionStart"); return; }
@@ -293,18 +317,20 @@ private:
     void pullMd(const MdWatermark& w) {
         for (int i = 0; i < w.count; ++i) pullToVenueSeq(w.streamIds[i], w.seqs[i]);
     }
-    // Feed the journal forward until this feed has reached the venue sequence the live engine had
-    // consumed. One feed today, so stopping at the first frame past the target is exact. With
-    // several feeds interleaved in one journal it would be conservative; MD-6 removes the question
-    // by giving each feed its own journal keyed by its own venueSeq, where this becomes a seek.
+    // Feed this feed's journal forward until it has reached the venue sequence the live engine had
+    // consumed. Every feed has its own journal, so stopping at the first frame past the target is
+    // exact, and the feeds can be pulled in any order: nothing the engine keeps depends on how
+    // their messages interleaved, only on how far each one had been read.
     void pullToVenueSeq(uint32_t feedId, uint64_t targetVenueSeq) {
-        if (!mdJournal_ || targetVenueSeq == 0) return;
-        if (wm_.seqFor(feedId) >= targetVenueSeq) return;
-        uint64_t last = mdJournal_->replayWhile(mdCursor_ + 1, [&](const FrameHeader* m) {
-            if (md::identity(m).venueSeq > targetVenueSeq) return false;
-            onMd(m); return true;
-        });
-        if (last) mdCursor_ = last;
+        if (targetVenueSeq == 0 || wm_.seqFor(feedId) >= targetVenueSeq) return;
+        for (MdSource& src : md_) {
+            if (src.feedId != feedId) continue;
+            uint64_t last = src.journal->replayWhile(src.cursor + 1, [&](const FrameHeader* m) {
+                if (md::identity(m).venueSeq > targetVenueSeq) return false;
+                onMd(m); return true;
+            });
+            if (last) src.cursor = last;
+        }
     }
     void note(const std::string& what) { ++mismatches_; if (firstMismatch_.empty()) firstMismatch_ = what; }
     // Decisions are evaluated when the order is read (as live did) and matched to the sequenced
@@ -347,9 +373,10 @@ private:
         omsExpected_.pop_front();
     }
     void pullTo(uint64_t causeSeq) {
-        if (!wmIndex_ || !mdJournal_) return;
-        auto it = std::lower_bound(wmIndex_->begin(), wmIndex_->end(), std::make_pair(causeSeq, uint64_t(0)));
-        if (it != wmIndex_->end() && it->first == causeSeq) pullToVenueSeq(FEED_XNAS_ITCH, it->second);
+        if (!wmIndex_) return;
+        for (auto it = std::lower_bound(wmIndex_->begin(), wmIndex_->end(), WmEntry{causeSeq, 0, 0});
+             it != wmIndex_->end() && it->cause == causeSeq; ++it)
+            pullToVenueSeq(it->feedId, it->venueSeq);
     }
     // The plan the replay computed must be the plan the live engine sequenced, field for field.
     // Anything less than that - comparing only a cost, or only the first venue - would pass a
@@ -411,7 +438,8 @@ private:
     std::vector<std::byte> bookMem_; md::BookBuilder book_; md::BookReader bookReader_;
     router::Router router_; WatermarkTracker wm_;
     std::deque<std::vector<std::byte>> omsExpected_;
-    const Journal* mdJournal_; uint64_t mdCursor_ = 0; const std::vector<std::pair<uint64_t, uint64_t>>* wmIndex_ = nullptr;
+    struct MdSource { uint32_t feedId; const Journal* journal; uint64_t cursor; };
+    std::vector<MdSource> md_; const std::vector<WmEntry>* wmIndex_ = nullptr;
     std::array<uint8_t, 32> snapHash_{};
     NewOrder lastOrder_{}; ReplaceOrder lastReplace_{}; FrameHeader lastHdr_{}; bool lastIsReplace_ = false;
     struct Expected { RiskDecision d; bool replace; };
@@ -434,8 +462,8 @@ public:
     Stats runLive() {
         namespace fs = std::filesystem;
         fs::create_directories(cfg_.workdir);
-        std::string coreDir = cfg_.workdir + "/core.jnl", mdDir = cfg_.workdir + "/md.jnl";
-        fs::remove_all(coreDir); fs::remove_all(mdDir);
+        std::string coreDir = cfg_.workdir + "/core.jnl", mdDir = cfg_.workdir + "/md.jnl", md2Dir = cfg_.workdir + "/md-bats.jnl";
+        fs::remove_all(coreDir); fs::remove_all(mdDir); fs::remove_all(md2Dir);
         Snapshot snap(cfg_.snapshot);
         const uint32_t NSYM = uint32_t(std::count_if(snap.instruments().begin(), snap.instruments().end(), [](const SymbolRecord& r) { return r.status != 0; }));
         FakeClock fake; SteadyClock steady; Clock& clock = cfg_.benchMode ? static_cast<Clock&>(steady) : static_cast<Clock&>(fake);
@@ -449,6 +477,22 @@ public:
         Engine eng(snap, cfg_.sessions, Engine::Mode::Live);
         StreamReader engCore(coreRing, coreJ, 1), engMd(mdRing, mdJ, 1), venueCore(coreRing, coreJ, 1);
         VenueSim venue(VenueSim::Params{2, 7, cfg_.sessions, cfg_.throttlePerSec, 12'000}, snap.instruments().size() + 1);
+        // The second lit venue: Cboe BZX, one session (the fixture's 301), its own feed, journal and
+        // book. Its true latency is not the registry's 21 us but 27 us with up to 2 us of jitter -
+        // the registry is a configured number, and the router is told the measured one by a
+        // VenueScorecard, which is what RT-8 means by refining offsets from measured acks.
+        std::optional<VenueSim> lit2;
+        std::unique_ptr<BroadcastRing> md2Ring; std::unique_ptr<Journal> md2J; std::unique_ptr<Sequencer> md2;
+        std::unique_ptr<StreamReader> engMd2;
+        if (cfg_.litVenues >= 2) {
+            VenueSim::Params lp{3, 19, 1, cfg_.throttlePerSec, BATS_TRUE_LATENCY_NS};
+            lp.latencyJitterNs = LATENCY_JITTER_NS; lp.seed = cfg_.seed ^ 0xBA75;
+            lit2.emplace(lp, snap.instruments().size() + 1);
+            md2Ring = std::make_unique<BroadcastRing>(1 << 16);
+            md2J = std::make_unique<Journal>(md2Dir, FEED_BATS, 1, cfg_.segmentBytes);
+            md2 = std::make_unique<Sequencer>(FEED_BATS, 18, *md2J, *md2Ring, clock, 0);
+            engMd2 = std::make_unique<StreamReader>(*md2Ring, *md2J, 1);
+        }
         // The ATS: one session, nothing displayed, filled at the midpoint when hidden flow meets it.
         std::optional<VenueSim> dark;
         if (cfg_.darkContraPct >= 0) {
@@ -456,8 +500,8 @@ public:
             dp.dark = true; dp.contraPct = uint32_t(cfg_.darkContraPct); dp.seed = cfg_.seed ^ 0xDA4C;
             dark.emplace(dp, snap.instruments().size() + 1);
         }
-        auto venueOnMd = [&](const FrameHeader* f) { venue.onMd(f); if (dark) dark->onMd(f); };
-        auto venueOnCore = [&](const FrameHeader* f, int64_t t) { venue.onCore(f, t); if (dark) dark->onCore(f, t); };
+        auto venueOnMd = [&](const FrameHeader* f) { venue.onMd(f); if (dark) dark->onMd(f); if (lit2) lit2->onMd(f); };
+        auto venueOnCore = [&](const FrameHeader* f, int64_t t) { venue.onCore(f, t); if (dark) dark->onCore(f, t); if (lit2) lit2->onCore(f, t); };
         // The real stack, not a stand-in: ITCH bytes on two lines, arbitrated, decoded, and built
         // into a book whose top of book is what the client simulator prices against. Every message
         // of every simulated day now goes through the components a real day would.
@@ -470,6 +514,15 @@ public:
         msp.seed = cfg_.seed ^ 0xFEED;
         BookSegment bookSeg(bookPath, NSYM, 4, snap.businessDate(), true);
         MdStack feed(snap, engRef(eng), msp, bookSeg.base());
+        std::unique_ptr<BookSegment> book2Seg; std::unique_ptr<MdStack> feed2;
+        if (cfg_.litVenues >= 2) {
+            const std::string book2Path = cfg_.workdir + "/book-bats.seg";
+            fs::remove(book2Path);
+            MdStack::Params p2 = msp;
+            p2.feedId = FEED_BATS; p2.venueId = 3; p2.sourceId = 18; p2.seed = cfg_.seed ^ 0xBA75FEED;
+            book2Seg = std::make_unique<BookSegment>(book2Path, NSYM, 4, snap.businessDate(), true);
+            feed2 = std::make_unique<MdStack>(snap, engRef(eng), p2, book2Seg->base());
+        }
         ClientSim::Params cp{42, 2, 9, NSYM, cfg_.adversarial, 15, 30};
         cp.allowDarkPct = cfg_.allowDarkPct;
         ClientSim client(cp, cfg_.seed ^ 0xC11E);
@@ -485,13 +538,27 @@ public:
             eng.arms().clear();
         };
         auto drainCore = [&]() { if (cfg_.benchMode) { uint64_t l = coreRing.lag(0); if (l > maxLag) maxLag = l; } engCore.poll([&](const FrameHeader* f) { eng.onCore(f); }); flushEngine(); };
-        auto drainMd = [&]() { engMd.poll([&](const FrameHeader* f) { eng.onMd(f); }); };
+        auto drainMd = [&]() { engMd.poll([&](const FrameHeader* f) { eng.onMd(f); }); if (engMd2) engMd2->poll([&](const FrameHeader* f) { eng.onMd(f); }); };
         auto submitCore = [&](FrameHeader* f) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!core.submit(f)) drainCore(); };
         auto venueEmit = [&](FrameHeader* f) { while (!core.submit(f)) drainCore(); };
+        // A feed's normalised message onto that feed's own stream.
+        auto toStream = [&](Sequencer& seq, const FrameHeader* cf) {
+            auto* f = const_cast<FrameHeader*>(cf);
+            f->flags = uint16_t(f->flags | FrameFlags::simulated);
+            // A per-feed stream is replayed to a watermark of (feedId, venueSeq), so a
+            // message the venue does not sequence cannot go on one: there is no position to
+            // replay to. VenueStatus is the case in practice - a venue-wide open or close
+            // rather than a fact about a symbol - and it belongs on the core stream, which
+            // is replayed by a sequence of ours.
+            if (md::identityVenueSeq(f) == 0) { submitCore(f); return; }
+            while (!seq.submit(f)) drainMd();
+            venueOnMd(f);
+        };
         auto venuesRun = [&](int64_t t) {
             venueCore.poll([&](const FrameHeader* f) { venueOnCore(f, t); });
             venue.flush(t, venueEmit); venue.process(t, venueEmit);
             if (dark) { dark->flush(t, venueEmit); dark->process(t, venueEmit); }
+            if (lit2) { lit2->flush(t, venueEmit); lit2->process(t, venueEmit); }
         };
         // Timers due by now go on the core stream as frames; both readers are caught up here, so the
         // sequencer has room for them.
@@ -512,18 +579,11 @@ public:
                 if (f->streamId == 1) { f->flags = uint16_t(f->flags | FrameFlags::simulated); while (!md.submit(f)) drainMd(); venueOnMd(f); }
                 else submitCore(f);
             } else {
-                feed.burst(uint32_t(1 + rng() % 3), now, [&](const FrameHeader* cf) {
-                    auto* f = const_cast<FrameHeader*>(cf);
-                    f->flags = uint16_t(f->flags | FrameFlags::simulated);
-                    // A per-feed stream is replayed to a watermark of (feedId, venueSeq), so a
-                    // message the venue does not sequence cannot go on one: there is no position to
-                    // replay to. VenueStatus is the case in practice - a venue-wide open or close
-                    // rather than a fact about a symbol - and it belongs on the core stream, which
-                    // is replayed by a sequence of ours.
-                    if (md::identityVenueSeq(f) == 0) { submitCore(f); return; }
-                    while (!md.submit(f)) drainMd();
-                    venueOnMd(f);
-                });
+                feed.burst(uint32_t(1 + rng() % 3), now, [&](const FrameHeader* cf) { toStream(md, cf); });
+                if (feed2) {
+                    const uint32_t n2 = uint32_t(1 + rng() % 3);
+                    feed2->burst(n2, now, [&](const FrameHeader* cf) { toStream(*md2, cf); });
+                }
                 if (cfg_.drill == "rate-burst" && step == steps / 2) client.burst(2500, now, [&](uint32_t s) { return feed.mid(s); }, submitCore);
                 else client.step(now, [&](uint32_t s) { return feed.mid(s); }, submitCore);
             }
@@ -553,6 +613,10 @@ public:
         s.stillResting = venue.restingFor(uint16_t(RouteStrategy::PassivePost)) + (dark ? dark->restingFor(uint16_t(RouteStrategy::DarkFirst)) : 0);
         s.timersArmed = eng.timersArmed(); s.timersFired = eng.timersFired(); s.escalations = eng.escalatedPlans();
         s.darkChildren = eng.router().darkChildren(); s.darkDeclined = eng.router().darkDeclined();
+        if (lit2) {
+            for (const auto& e : lit2->dropCopy()) if (e.execType == ExecType::Fill || e.execType == ExecType::PartialFill) ++s.dropCopyFills;
+            arrivalSpread(venue, *lit2, s);
+        }
         liveStats_ = s; return s;
     }
 
@@ -586,15 +650,24 @@ public:
     VerifyResult verify() {
         Snapshot snap(cfg_.snapshot);
         Journal coreJ(cfg_.workdir + "/core.jnl", 0, 1, cfg_.segmentBytes), mdJ(cfg_.workdir + "/md.jnl", FEED_XNAS_ITCH, 1, cfg_.segmentBytes);
-        Engine eng(snap, cfg_.sessions, Engine::Mode::Verify, &mdJ);
-        std::vector<std::pair<uint64_t, uint64_t>> wmIndex;      // (cause seq, md target) for the engine's watermark batches
+        std::optional<Journal> md2J;
+        Engine eng(snap, cfg_.sessions, Engine::Mode::Verify);
+        eng.addMdJournal(FEED_XNAS_ITCH, &mdJ);
+        if (cfg_.litVenues >= 2) { md2J.emplace(cfg_.workdir + "/md-bats.jnl", FEED_BATS, 1, cfg_.segmentBytes); eng.addMdJournal(FEED_BATS, &*md2J); }
+        // (cause seq, feed, venue seq) for the engine's watermark batches. Several batches can answer
+        // one cause (the OMS's reports and the router's plan); the first watermark for each feed is
+        // where the engine was when it started on that frame, which is what a decision depends on.
+        std::vector<Engine::WmEntry> wmIndex;
         coreJ.replay(1, 0, [&](const FrameHeader* f) {
-            if (auto* w = as<MdWatermark>(f); w && f->sourceId == 3) {
-                uint64_t target = 0; for (int i = 0; i < w->count; ++i) if (w->streamIds[i] == FEED_XNAS_ITCH) target = w->seqs[i];
-                if (wmIndex.empty() || wmIndex.back().first != f->causeSeq) wmIndex.push_back({f->causeSeq, target});
-            }
+            if (auto* w = as<MdWatermark>(f); w && f->sourceId == 3)
+                for (int i = 0; i < w->count; ++i) wmIndex.push_back({f->causeSeq, w->streamIds[i], w->seqs[i]});
         });
-        std::sort(wmIndex.begin(), wmIndex.end());
+        std::stable_sort(wmIndex.begin(), wmIndex.end(), [](const Engine::WmEntry& a, const Engine::WmEntry& b) {
+            return a.cause != b.cause ? a.cause < b.cause : a.feedId < b.feedId;
+        });
+        wmIndex.erase(std::unique(wmIndex.begin(), wmIndex.end(), [](const Engine::WmEntry& a, const Engine::WmEntry& b) {
+            return a.cause == b.cause && a.feedId == b.feedId;
+        }), wmIndex.end());
         eng.setWatermarkIndex(&wmIndex);
         VerifyResult r;
         r.frames = coreJ.replay(1, 0, [&](const FrameHeader* f) { eng.onCore(f); });
@@ -605,12 +678,38 @@ public:
 
 private:
     static const RefData& engRef(const Engine& e) { return e.risk().refData(); }
+    // For each plan with children on both lit venues: the latest arrival minus the earliest.
+    static void arrivalSpread(const VenueSim& a, const VenueSim& b, Stats& s) {
+        std::map<uint64_t, std::pair<VenueSim::ArrivalRec, VenueSim::ArrivalRec>> both;
+        std::map<uint64_t, VenueSim::ArrivalRec> first;
+        for (const auto& r : a.arrivalsLog()) first.emplace(r.cause, r);
+        for (const auto& r : b.arrivalsLog()) if (auto it = first.find(r.cause); it != first.end()) both.emplace(r.cause, std::make_pair(it->second, r));
+        std::vector<int64_t> held, unheld;
+        for (const auto& [cause, p] : both) {
+            held.push_back(std::abs(p.first.arriveTs - p.second.arriveTs));
+            unheld.push_back(std::abs((p.first.arriveTs - p.first.holdNs) - (p.second.arriveTs - p.second.holdNs)));
+        }
+        s.multiVenuePlans = held.size();
+        if (held.empty()) return;
+        std::sort(held.begin(), held.end()); std::sort(unheld.begin(), unheld.end());
+        s.spreadP50 = held[held.size() / 2]; s.spreadMax = held.back();
+        s.unheldSpreadP50 = unheld[unheld.size() / 2]; s.unheldSpreadMax = unheld.back();
+    }
     template <class Submit> void setupAccount(Submit& submit, uint32_t acct) {
         Frame<LimitUpdate> l; l.init(); l.header.sourceId = 13; l.body.accountIdx = acct; l.body.maxOrderQty = 5000; l.body.maxOrderNotional = 5'000'000LL * 100'000'000LL;
         l.body.maxGrossExposure = 500'000'000LL * 100'000'000LL; l.body.maxNetExposure = 300'000'000LL * 100'000'000LL; l.body.priceCollarBps = 500; l.body.maxMsgRate = 2000; l.body.maxOpenOrders = 2000;
         l.body.dupWindowMs = cfg_.adversarial ? 50 : 0; submit(&l.header);
         Frame<BuyingPowerUpdate> b; b.init(); b.header.sourceId = 11; b.body.accountIdx = acct; b.body.buyingPower = 1'000'000'000LL * 100'000'000LL; submit(&b.header);
         Frame<LocateGranted> g; g.init(); g.header.sourceId = 10; g.body.locateId = 1; g.body.accountIdx = acct; g.body.symbolIdx = 7; g.body.qty = 1'000'000; g.body.result = LocateResult::Granted; g.body.expiryTs = INT64_MAX; submit(&g.header);
+        if (cfg_.litVenues >= 2) {
+            // What TCA measured on each wire, published as venue-wide scorecards. Fill rate and
+            // reversion stay neutral; the latency is the median of what the simulator's wire does.
+            for (auto [venue, latency] : {std::pair<uint16_t, int64_t>{2, 12'000}, {3, BATS_TRUE_LATENCY_NS + LATENCY_JITTER_NS / 2}}) {
+                Frame<VenueScorecard> sc; sc.init(); sc.header.sourceId = 14;
+                sc.body.venueId = venue; sc.body.fillRateBps = 10'000; sc.body.latencyP50Ns = latency; sc.body.latencyP99Ns = latency + LATENCY_JITTER_NS / 2;
+                submit(&sc.header);
+            }
+        }
         if (!cfg_.profile.empty()) {                       // the control plane sets the account's profile (3 in the fixture)
             Frame<RoutingProfileUpdate> rp; rp.init(); rp.header.sourceId = 13; rp.body.profileId = 3;
             rp.body.strategy = cfg_.profile == "dark-first" ? RouteStrategy::DarkFirst : cfg_.profile == "passive-post" ? RouteStrategy::PassivePost

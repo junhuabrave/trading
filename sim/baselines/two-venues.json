@@ -1,0 +1,17 @@
+{
+  "scenario": "two-venues",
+  "seed": 7,
+  "steps": 6000,
+  "orders": 3802,
+  "accepted": 3478,
+  "rejected": 324,
+  "fills": 2278,
+  "cancelled": 1308,
+  "children": 4781,
+  "reroutes": 1079,
+  "checkpoints": 34,
+  "coreSeq": 67351,
+  "mdSeq": 16803,
+  "verified": 31823,
+  "finalHash": "a091710f5da1d72b01df9a48f9f169f3429669a79889e39a3a70d4ed45de819b"
+}

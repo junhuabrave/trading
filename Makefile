@@ -126,7 +126,7 @@ test: check all build/refdata-diff.log
 	./build/test_book build/refdata-20260915-v1.bin build/booktest
 	@echo "== router: the cost model on worked examples, and named market shapes with a right answer"
 	./build/test_router build/refdata-20260915-v1.bin build/routertest
-	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario, the resting strategies"
+	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario, the resting strategies, two lit venues"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/kill --scenario kill --steps 3000 --drill kill --baseline sim/baselines/kill.json
@@ -138,6 +138,7 @@ test: check all build/refdata-diff.log
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/dark-fills --scenario dark-fills --steps 6000 --profile dark-first --dark-venue 4 --allow-dark 80 --baseline sim/baselines/dark-fills.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/dark-dry --scenario dark-dry --steps 6000 --profile dark-first --dark-venue 0 --allow-dark 80 --baseline sim/baselines/dark-dry.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/passive --scenario passive --steps 6000 --profile passive-post --baseline sim/baselines/passive.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/two-venues --scenario two-venues --steps 6000 --venues 2 --baseline sim/baselines/two-venues.json
 	@echo "== all tests passed"
 
 # Benchmarks: every binary prints JSON rows; tools/bench.py collects, compares to
@@ -185,3 +186,4 @@ baselines: build/run_sim build/refdata-20260915-v1.bin
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/dark-fills --scenario dark-fills --steps 6000 --profile dark-first --dark-venue 4 --allow-dark 80 --write-baseline sim/baselines/dark-fills.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/dark-dry --scenario dark-dry --steps 6000 --profile dark-first --dark-venue 0 --allow-dark 80 --write-baseline sim/baselines/dark-dry.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/passive --scenario passive --steps 6000 --profile passive-post --write-baseline sim/baselines/passive.json
+	./build/run_sim build/refdata-20260915-v1.bin build/sim/two-venues --scenario two-venues --steps 6000 --venues 2 --write-baseline sim/baselines/two-venues.json

@@ -236,7 +236,13 @@ public:
     uint64_t internalizeBlocked() const noexcept { return internalizeBlocked_; }
     uint8_t  venueKind(uint16_t venueId) const noexcept { return venueId < MAX_VENUES ? kind_[venueId] : 0; }
     uint64_t noLiquidity() const noexcept { return noLiquidity_; }
-    int64_t  venueLatencyNs(uint16_t venueId) const noexcept { return venueId < MAX_VENUES ? latency_[venueId] : 0; }
+    // One-way latency to a venue: what the scorecard measured when TCA has published one, and the
+    // registry's configured figure until then. Release offsets are only as good as this number.
+    int64_t  venueLatencyNs(uint16_t venueId) const noexcept {
+        if (venueId >= MAX_VENUES) return 0;
+        const Scorecard& sc = venue_[venueId].card;
+        return sc.known && sc.latencyNs > 0 ? sc.latencyNs : latency_[venueId];
+    }
     uint64_t placedOn(uint16_t venueId, uint16_t session) const noexcept {
         return venueId < MAX_VENUES && session < MAX_SESSIONS ? venue_[venueId].sessions[session].placed : 0;
     }

@@ -332,6 +332,20 @@ int main(int argc, char** argv) {
         }
         std::printf("\n");
         CHECK(p.children[0].releaseOffsetNs != p.children[1].releaseOffsetNs);   // the drill has teeth
+        // The registry's latency is a configured number; a scorecard's is measured, and wins. Nasdaq
+        // measured at 50 us is now slower than NYSE's configured 38 us, so NYSE waits 12 us and
+        // Nasdaq not at all - the other way round from the registry's answer above.
+        Frame<VenueScorecard> sc; sc.init();
+        sc.body.venueId = 2; sc.body.fillRateBps = 10'000; sc.body.latencyP50Ns = 50'000;
+        router.apply(&sc.header);
+        Plan m;
+        CHECK(router.plan(parent(Side::Buy, 400, 22'05000000LL), 400, 0, m));
+        CHECK(m.count == 2);
+        for (uint8_t i = 0; i < m.count; ++i)
+            CHECK(m.children[i].releaseOffsetNs == (m.children[i].venueId == 1 ? 12'000 : 0));
+        sc.body.latencyP50Ns = 0;                                  // no measurement: back to the registry
+        router.apply(&sc.header);
+        CHECK(router.venueLatencyNs(2) == 12'000);
     }
 
     // ---- 10: the same parent against the same book, twice
