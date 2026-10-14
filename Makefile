@@ -3,12 +3,12 @@ CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra -Werror -pedantic
 B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DBLAKE3_USE_NEON=0
-INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Icore/md -Icore/router -Isim -Ithird_party/blake3
+INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Icore/md -Icore/router -Icore/poskeeper -Isim -Ithird_party/blake3
 B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
 .PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines goldens
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/test_book build/test_router build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/bench_router
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/test_book build/test_router build/test_poskeeper build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/bench_router
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -40,10 +40,10 @@ build/test_seq: tests/test_seq.cpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/tra
 build/bench_seq: tests/bench_seq.cpp core/seq/*.hpp gen/cpp/trading.hpp | build
 	$(CXX) $(CXXFLAGS) $(INC) $< -o $@ -lpthread
 
-build/test_risk: tests/test_risk.cpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/test_risk: tests/test_risk.cpp core/risk/*.hpp core/poskeeper/*.hpp core/seq/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
-build/run_sim: sim/run_sim.cpp sim/*.hpp core/md/*.hpp core/router/*.hpp core/oms/*.hpp core/risk/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/run_sim: sim/run_sim.cpp sim/*.hpp core/md/*.hpp core/router/*.hpp core/oms/*.hpp core/risk/*.hpp core/poskeeper/*.hpp core/seq/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/test_md: tests/test_md.cpp core/md/*.hpp sim/feed_publisher.hpp sim/feed_sim.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -64,6 +64,9 @@ build/test_book: tests/test_book.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata
 build/test_router: tests/test_router.cpp core/router/*.hpp core/md/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
+build/test_poskeeper: tests/test_poskeeper.cpp core/poskeeper/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@ -lpthread
+
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
@@ -79,7 +82,7 @@ build/bench_router: tests/bench_router.cpp core/router/*.hpp core/md/*.hpp core/
 build/bench_oms: tests/bench_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
-build/bench_risk: tests/bench_risk.cpp core/risk/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/bench_risk: tests/bench_risk.cpp core/risk/*.hpp core/poskeeper/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
 build/bench: tests/bench.cpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -126,6 +129,8 @@ test: check all build/refdata-diff.log
 	./build/test_book build/refdata-20260915-v1.bin build/booktest
 	@echo "== router: the cost model on worked examples, and named market shapes with a right answer"
 	./build/test_router build/refdata-20260915-v1.bin build/routertest
+	@echo "== position keeper: the fold by hand, checkpoints, the shared view under a writer, replay"
+	./build/test_poskeeper build/postest
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario, the resting strategies, two lit venues"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json

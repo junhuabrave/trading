@@ -9,9 +9,9 @@
   "cancelled": 1370,
   "children": 5482,
   "reroutes": 1848,
-  "checkpoints": 39,
-  "coreSeq": 77844,
+  "checkpoints": 40,
+  "coreSeq": 78251,
   "mdSeq": 16775,
-  "verified": 36692,
-  "finalHash": "2956bf62244a8d25535fe31a47fb536831b71dbf83f2a12d99cd67aa5aa5a011"
+  "verified": 37098,
+  "finalHash": "4692db3e7d705ac7c7c4e344b3f53bb10e7a127106de2a5fd55c21012e9885f4"
 }

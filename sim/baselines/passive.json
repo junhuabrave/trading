@@ -10,8 +10,8 @@
   "children": 6684,
   "reroutes": 2999,
   "checkpoints": 46,
-  "coreSeq": 91243,
+  "coreSeq": 91698,
   "mdSeq": 16775,
-  "verified": 42682,
-  "finalHash": "d9051e15e79cef22f0af518bcac469fa10f69ae298384d8173de9a6e45aebcb9"
+  "verified": 43137,
+  "finalHash": "76b5b5c195367df28413a64dac9b9f1f60cce7cb41d70aee1c0e64d4c2365669"
 }

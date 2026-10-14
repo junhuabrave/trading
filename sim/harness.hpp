@@ -9,6 +9,7 @@
 #include "watermark.hpp"
 #include "risk.hpp"
 #include "oms.hpp"
+#include "poskeeper.hpp"
 #include "identity.hpp"
 #include "venue_sim.hpp"
 #include "router.hpp"
@@ -44,6 +45,7 @@ inline constexpr int64_t BATS_TRUE_LATENCY_NS = 27'000;
 inline constexpr int64_t LATENCY_JITTER_NS = 2'000;
 // ITCH stamps nanoseconds since the venue day's midnight; this is that midnight, so every venueTs
 // the harness sees is an ordinary epoch timestamp.
+namespace pk { inline constexpr uint16_t SOURCE = 6; }   // the position keeper's sourceId
 inline constexpr int64_t SESSION_MIDNIGHT_NS = 1'757'894'400'000'000'000LL;
 
 struct Config {
@@ -89,6 +91,7 @@ public:
 
     Engine(const Snapshot& snap, uint32_t sessions, Mode mode, uint16_t sourceId = 3)
         : mode_(mode), src_(sourceId), risk_(rd_), oms_(4, 1 << 18),
+          posMem_(pos::PositionView::bytesFor(1u << 14, 1u << 8)), pk_(pos::PositionKeeper::Params{6, 1u << 14, 1u << 8}, posMem_.data()),
           bookMem_(md::BookSegment::bytesFor(uint32_t(snap.instruments().size()) + 1, BOOK_MAX_VENUE)),
           book_(rd_, bookParams(snap), bookMem_.data()),
           bookReader_(bookMem_.data(), uint32_t(snap.instruments().size()) + 1, BOOK_MAX_VENUE),
@@ -128,12 +131,13 @@ public:
     }
     void onCore(const FrameHeader* f) {
         if (auto* ss = as<SessionStart>(f)) { if (std::memcmp(ss->snapshotHash.data(), snapHash_.data(), 32) != 0) throw std::runtime_error("engine: snapshot hash mismatch at SessionStart"); return; }
-        if (as<Checkpoint>(f)) { onCheckpoint(f); return; }
+        if (as<Checkpoint>(f)) { publishPositions(f); onCheckpoint(f); return; }
         if (auto* t = as<Timer>(f)) { if (t->strategyId == src_) onTimer(f, *t); return; }
         if (auto* ack = as<CheckpointAck>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) verifyAck(*ack); return; }
         if (auto* w = as<MdWatermark>(f)) { if (mode_ == Mode::Verify && f->sourceId == src_) pullMd(*w); return; }
         // the OMS's own frames come back on the stream: in Verify they must equal what this OMS produced
         if (mode_ == Mode::Verify && f->sourceId == 4) verifyOmsFrame(f);
+        if (mode_ == Mode::Verify && f->sourceId == pk::SOURCE) verifyPkFrame(f);
         if (mode_ == Mode::Verify) pullTo(f->seq);         // market data to where the live engine was when it handled this frame
         // the OMS and the router see everything (they only react to what concerns them). Live: the OMS's
         // outputs for a frame go out as one batch behind a watermark, so replay can regenerate the NBBO on them
@@ -144,6 +148,7 @@ public:
         } else oms_.apply(f, [&](FrameHeader* out) { const auto* p = reinterpret_cast<const std::byte*>(out); omsExpected_.emplace_back(p, p + out->frameLength); });
         router_.apply(f);
         risk_.apply(f);
+        pk_.apply(f, [](const FrameHeader*) {});            // fills; it publishes only at a Checkpoint
         // a parent the client has heard the last of: the router no longer needs to remember it crossed
         if (auto* e = as<ExecReport>(f); e && f->sourceId == 4 && e->childOrderId == 0 && oms::terminal(e->ordStatus)) router_.forget(e->orderId);
         if (auto* o = as<NewOrder>(f)) { lastOrder_ = *o; lastHdr_ = *f; lastIsReplace_ = false; if (mode_ == Mode::Live) decideLive(f); else decideVerify(f); return; }
@@ -178,10 +183,11 @@ public:
     std::array<uint8_t, 32> hash() const {
         blake3_hasher h; blake3_hasher_init(&h);
         auto r = risk_.stateHash(); blake3_hasher_update(&h, r.data(), 32);
-        oms_.hashInto(h); router_.hashInto(h);
+        oms_.hashInto(h); router_.hashInto(h); pk_.hashInto(h);
         std::array<uint8_t, 32> out{}; blake3_hasher_finalize(&h, out.data(), 32); return out;
     }
     const RiskEngine& risk() const { return risk_; } const oms::Oms& oms() const { return oms_; } const router::Router& router() const { return router_; }
+    const pos::PositionKeeper& positions() const { return pk_; }
     uint64_t checkpoints() const { return checkpoints_; }
     uint64_t verified() const { return verified_; } uint64_t mismatches() const { return mismatches_; }
     uint64_t unidentified() const { return unidentified_; }
@@ -304,6 +310,24 @@ private:
         if (it == expectedTimers_.end() || it->second != st.orderId || st.reason != uint16_t(Reason::StrategyTimer))
             note("OrderState from the router for parent " + std::to_string(st.orderId) + " (cause " + std::to_string(f->causeSeq) + ") that the replay did not ask for");
         else expectedTimers_.erase(it);
+    }
+    // The position keeper's snapshots as of this checkpoint: one batch live, and in replay the frames
+    // it must have produced, compared byte for byte as they come back.
+    void publishPositions(const FrameHeader* f) {
+        bool first = true;
+        pk_.apply(f, [&](FrameHeader* out) {
+            if (mode_ == Mode::Live) { out->causeSeq = f->seq; emit(out, f->seq, first); first = false; }
+            else { const auto* p = reinterpret_cast<const std::byte*>(out); pkExpected_.emplace_back(p, p + out->frameLength); }
+        });
+    }
+    void verifyPkFrame(const FrameHeader* f) {
+        ++verified_;
+        if (pkExpected_.empty()) { note("position keeper frame at seq " + std::to_string(f->seq) + " that the replay did not produce"); return; }
+        const auto& e = pkExpected_.front(); const auto* eh = reinterpret_cast<const FrameHeader*>(e.data());
+        if (eh->templateId != f->templateId || eh->frameLength != f->frameLength
+            || std::memcmp(e.data() + sizeof(FrameHeader), reinterpret_cast<const std::byte*>(f) + sizeof(FrameHeader), f->frameLength - sizeof(FrameHeader)) != 0)
+            note("position keeper frame at seq " + std::to_string(f->seq) + " (" + lookup(f->templateId)->name + ") differs from the replay's");
+        pkExpected_.pop_front();
     }
     void onCheckpoint(const FrameHeader* f) {
         auto h = hash(); ++checkpoints_;
@@ -435,6 +459,7 @@ private:
     }
 
     RefData rd_; RiskEngine risk_; oms::Oms oms_;
+    std::vector<std::byte> posMem_; pos::PositionKeeper pk_; std::deque<std::vector<std::byte>> pkExpected_;
     std::vector<std::byte> bookMem_; md::BookBuilder book_; md::BookReader bookReader_;
     router::Router router_; WatermarkTracker wm_;
     std::deque<std::vector<std::byte>> omsExpected_;
@@ -646,7 +671,14 @@ public:
     }
 
     // Cold replay of the core journal; market data pulled to each watermark. Returns mismatches.
-    struct VerifyResult { uint64_t verified = 0, mismatches = 0, frames = 0, checkpoints = 0; std::array<uint8_t, 32> finalHash{}; std::string first; };
+    // A risk engine restarted from the position keeper's snapshots at a checkpoint in the middle of
+    // the day, against the one that replayed the whole day.
+    struct Restart { uint64_t atSeq = 0, loaded = 0, foldedAfter = 0, compared = 0, differ = 0, corrections = 0; };
+    struct VerifyResult {
+        uint64_t verified = 0, mismatches = 0, frames = 0, checkpoints = 0; std::array<uint8_t, 32> finalHash{}; std::string first;
+        uint64_t pkPositions = 0, pkSnapshots = 0, riskRebases = 0, riskCorrections = 0, riskStale = 0;
+        Restart restart;
+    };
     VerifyResult verify() {
         Snapshot snap(cfg_.snapshot);
         Journal coreJ(cfg_.workdir + "/core.jnl", 0, 1, cfg_.segmentBytes), mdJ(cfg_.workdir + "/md.jnl", FEED_XNAS_ITCH, 1, cfg_.segmentBytes);
@@ -672,7 +704,62 @@ public:
         VerifyResult r;
         r.frames = coreJ.replay(1, 0, [&](const FrameHeader* f) { eng.onCore(f); });
         r.verified = eng.verified(); r.mismatches = eng.mismatches(); r.checkpoints = eng.checkpoints(); r.finalHash = eng.hash(); r.first = eng.firstMismatch();
+        r.pkPositions = eng.positions().positions(); r.pkSnapshots = eng.positions().positionSnapshots();
+        r.riskRebases = eng.risk().positionRebases(); r.riskCorrections = eng.risk().positionCorrections(); r.riskStale = eng.risk().staleSnapshots();
+        r.restart = restartDrill(snap, coreJ, eng);
         return r;
+    }
+
+    // PK-1's test. The checkpoint in the middle of the day; a fresh risk engine that loads only the
+    // keeper's snapshots as of it, then reads the journal from there on; and at the close, every
+    // position and each account's position exposure compared with the engine that ran from the open.
+    Restart restartDrill(const Snapshot& snap, const Journal& coreJ, const Engine& full) {
+        Restart out;
+        std::vector<uint64_t> checkpoints;
+        coreJ.replay(1, 0, [&](const FrameHeader* f) { if (as<Checkpoint>(f)) checkpoints.push_back(f->seq); });
+        if (checkpoints.size() < 3) return out;
+        const uint64_t at = checkpoints[checkpoints.size() / 2];
+        out.atSeq = at;
+        RefData rd; RiskEngine risk(rd); rd.load(snap); risk.load(snap);
+        // The keeper publishes a position only when it changed, so the state at a checkpoint is the
+        // latest snapshot of every position (and account) published as of it or earlier.
+        std::map<uint64_t, std::vector<std::byte>> latest;
+        coreJ.replay(1, 0, [&](const FrameHeader* f) {
+            if (f->sourceId != pk::SOURCE) return;
+            uint64_t k = 0;
+            if (auto* p = as<PositionSnapshot>(f)) { if (p->asOfSeq > at) return; k = pos::positionKey(p->accountIdx, p->symbolIdx); }
+            else if (auto* x = as<ExposureSnapshot>(f)) { if (f->causeSeq > at) return; k = (uint64_t(1) << 63) | x->accountIdx; }
+            else return;
+            const auto* b = reinterpret_cast<const std::byte*>(f);
+            latest[k].assign(b, b + f->frameLength);
+        });
+        for (const auto& [k, frame] : latest) {
+            const auto* f = reinterpret_cast<const FrameHeader*>(frame.data());
+            risk.apply(f);
+            if (as<PositionSnapshot>(f)) ++out.loaded;
+        }
+        // And the day from there on its own: none of the keeper's later snapshots, which would quietly
+        // put right whatever its own fold got wrong. What it has at the close it worked out itself.
+        coreJ.replay(at + 1, 0, [&](const FrameHeader* f) {
+            if (f->sourceId == pk::SOURCE) return;
+            if (auto* e = as<ExecReport>(f); e && e->childOrderId == 0 && (e->execType == ExecType::Fill || e->execType == ExecType::PartialFill) && e->lastQty) ++out.foldedAfter;
+            risk.apply(f);
+        });
+        const uint32_t nsym = uint32_t(snap.instruments().size());
+        for (const AccountRecord& a : snap.accounts()) {
+            for (uint32_t sy = 1; sy <= nsym; ++sy) {
+                const pos::Position x = full.risk().positionOf(a.accountIdx, sy), y = risk.positionOf(a.accountIdx, sy);
+                const pos::Position* k = full.positions().find(a.accountIdx, sy);
+                const pos::Position z = k ? *k : pos::Position{};
+                ++out.compared;
+                if (x.qty != y.qty || x.avgCost != y.avgCost || x.realized != y.realized
+                    || x.qty != z.qty || x.avgCost != z.avgCost || x.realized != z.realized) ++out.differ;
+            }
+            if (full.risk().grossPosition(a.accountIdx) != risk.grossPosition(a.accountIdx)
+                || full.risk().netPosition(a.accountIdx) != risk.netPosition(a.accountIdx)) ++out.differ;
+        }
+        out.corrections = risk.positionCorrections();
+        return out;
     }
     const Stats& liveStats() const { return liveStats_; }
 

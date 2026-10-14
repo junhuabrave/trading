@@ -13,6 +13,7 @@
 #include "refdata.hpp"
 #include "flatmap.hpp"
 #include "money.hpp"
+#include "position.hpp"
 #include <vector>
 #include <array>
 
@@ -106,13 +107,15 @@ public:
         }
         if (auto* m = as<PositionSnapshot>(h)) { onPositionSnapshot(*m); return true; }
         if (auto* m = as<ExposureSnapshot>(h)) {
-            // The position keeper's view of position exposure re-bases ours; the open-order
-            // fields are its reconciliation of our state, and ours stay authoritative.
-            if (m->accountIdx < MAX_ACCOUNTS) { auto& a = accounts_[m->accountIdx];
+            // The position keeper's account totals, for an engine starting from them. It carries no
+            // sequence to say how current it is, so once this engine has folded a fill of its own it
+            // keeps its figures; PositionSnapshot, which does carry one, is how they are checked.
+            // The open-order fields are the keeper's reconciliation of our state; ours stay authoritative.
+            if (m->accountIdx < MAX_ACCOUNTS && lastFillSeq_ == 0) { auto& a = accounts_[m->accountIdx];
                 a.grossPosition = money::toNano(m->grossExposure, m->moneyScale); a.netPosition = money::toNano(m->netExposure, m->moneyScale); }
             return true;
         }
-        if (auto* m = as<ExecReport>(h)) { if (m->childOrderId == 0) onExec(*m); return true; }   // parent-level only; venue-level reports are the OMS's input
+        if (auto* m = as<ExecReport>(h)) { if (m->childOrderId == 0) onExec(*m, h->seq); return true; }   // parent-level only; venue-level reports are the OMS's input
         if (auto* m = as<OrderState>(h)) { onOrderState(*m); return true; }
         if (auto* m = as<RiskDecision>(h)) { (void)m; return true; }   // our own output on replay; state was updated at evaluate()
         return false;
@@ -149,7 +152,15 @@ public:
     uint32_t openOrders(uint32_t acct) const noexcept { return accounts_[acct].openOrders; }
     money::i128 grossExposure(uint32_t acct) const noexcept { const auto& a = accounts_[acct]; return a.grossPosition + a.openBuyNotional + a.openSellNotional; }
     money::i128 netExposure(uint32_t acct) const noexcept { const auto& a = accounts_[acct]; return a.netPosition + a.openBuyNotional - a.openSellNotional; }
-    int64_t position(uint32_t acct, uint32_t sym) const noexcept { const int64_t* p = positions_.find(key(acct, sym)); return p ? *p : 0; }
+    // A position's exposure (quantity times average cost), and the position itself.
+    int64_t position(uint32_t acct, uint32_t sym) const noexcept { const pos::Position* p = positions_.find(key(acct, sym)); return p ? int64_t(pos::exposure(*p)) : 0; }
+    pos::Position positionOf(uint32_t acct, uint32_t sym) const noexcept { const pos::Position* p = positions_.find(key(acct, sym)); return p ? *p : pos::Position{}; }
+    // The position part of an account's exposure, without its open orders.
+    money::i128 grossPosition(uint32_t acct) const noexcept { return accounts_[acct].grossPosition; }
+    money::i128 netPosition(uint32_t acct) const noexcept { return accounts_[acct].netPosition; }
+    uint64_t positionRebases() const noexcept { return rebases_; }              // PositionSnapshots applied
+    uint64_t positionCorrections() const noexcept { return corrections_; }      // ...that disagreed with our own fold
+    uint64_t staleSnapshots() const noexcept { return stale_; }                 // ...older than a fill we had folded
     int64_t locateRemaining(uint64_t id) const noexcept { const Locate* l = locates_.find(id); return l ? l->remaining : -1; }
     int64_t openLeaves(uint64_t orderId) const noexcept { const OpenOrder* o = openOrders_.find(orderId); return o ? o->leaves : -1; }
     bool accountKnown(uint32_t acct) const noexcept { return acct < MAX_ACCOUNTS && accounts_[acct].known; }
@@ -378,28 +389,53 @@ private:
         return RiskVerdict::Accept;
     }
 
+    // The position keeper's figure for one position, as of a sequence number. Taken when this
+    // engine has folded no fill after that sequence - at a start from the keeper's snapshots, or
+    // at any checkpoint the engine has kept up with, where both have folded the same fills with the
+    // same function and the figures must agree. A disagreement is applied and counted, because it
+    // means one of the two folds is wrong. A snapshot older than our last fill is not applied: it
+    // cannot know about that fill.
     void onPositionSnapshot(const PositionSnapshot& p) noexcept {
         if (p.accountIdx >= MAX_ACCOUNTS) return;
-        Account& a = accounts_[p.accountIdx];
-        int64_t mark = p.markPx ? p.markPx : p.avgCost;
-        int64_t& pos = positions_[key(p.accountIdx, p.symbolIdx)];
-        int64_t before = pos < 0 ? -pos : pos; int64_t old = pos;
-        pos = p.qty * mark; int64_t after = pos < 0 ? -pos : pos;
-        a.grossPosition += after - before; a.netPosition += pos - old;
+        if (p.asOfSeq < lastFillSeq_) { ++stale_; return; }
+        pos::Position& cur = positions_[key(p.accountIdx, p.symbolIdx)];
+        pos::Position next{p.qty, p.avgCost, p.realizedPnl};
+        // Loading at a start is not a disagreement; differing from a figure we folded ourselves is.
+        if (lastFillSeq_ != 0 && (cur.qty != next.qty || cur.avgCost != next.avgCost || cur.realized != next.realized)) ++corrections_;
+        ++rebases_;
+        setPosition(p.accountIdx, cur, next);
     }
-    // Fills reduce the open commitment and move notional into position; buying power is released
-    // only for the unfilled remainder (the filled part stays committed until the margin engine re-bases).
-    void onExec(const ExecReport& e) noexcept {
+    void setPosition(uint32_t acct, pos::Position& cur, const pos::Position& next) noexcept {
+        Account& a = accounts_[acct];
+        const money::i128 before = pos::exposure(cur), after = pos::exposure(next);
+        a.grossPosition += (after < 0 ? -after : after) - (before < 0 ? -before : before);
+        a.netPosition += after - before;
+        cur = next;
+    }
+    // Fills move quantity into position at average cost, folded from the report itself so a fill
+    // counts even for an order this engine started too late to see accepted; and they reduce the
+    // open commitment of an order it did see. Buying power is released only for the unfilled
+    // remainder (the filled part stays committed until the margin engine re-bases). A bust trades
+    // the same quantity back at the same price.
+    void onExec(const ExecReport& e, uint64_t seq) noexcept {
+        const bool filled = e.execType == ExecType::PartialFill || e.execType == ExecType::Fill;
         OpenOrder* oo = openOrders_.find(e.orderId);
+        // whose position: the order's own record when we have it, the report's otherwise
+        const uint32_t acct = oo ? oo->accountIdx : e.accountIdx, sym = oo ? oo->symbolIdx : e.symbolIdx;
+        const bool buy = oo ? oo->buy() : e.side == Side::Buy;
+        if ((filled || e.execType == ExecType::TradeBust) && e.lastQty != 0 && acct < MAX_ACCOUNTS) {
+            const int64_t q = buy ? e.lastQty : -e.lastQty;
+            pos::Position& cur = positions_[key(acct, sym)];
+            pos::Position next = cur;
+            pos::fill(next, filled ? q : -q, e.lastPx);
+            setPosition(acct, cur, next);
+            lastFillSeq_ = seq;
+        }
         if (!oo) return;
         Account& a = accounts_[oo->accountIdx];
-        if (e.execType == ExecType::PartialFill || e.execType == ExecType::Fill) {
-            int64_t filled = e.lastQty * oo->px;
-            if (oo->buy()) a.openBuyNotional -= filled; else a.openSellNotional -= filled;
-            int64_t signedNotional = e.lastQty * e.lastPx * (oo->buy() ? 1 : -1);
-            int64_t& pos = positions_[key(oo->accountIdx, oo->symbolIdx)];
-            int64_t before = pos < 0 ? -pos : pos; pos += signedNotional; int64_t after = pos < 0 ? -pos : pos;
-            a.grossPosition += after - before; a.netPosition += signedNotional;
+        if (filled) {
+            int64_t filledNotional = e.lastQty * oo->px;
+            if (oo->buy()) a.openBuyNotional -= filledNotional; else a.openSellNotional -= filledNotional;
             oo->leaves -= e.lastQty;
         }
         // execType Rejected with ordStatus still live is a cancel or replace reject: the order stands
@@ -428,7 +464,8 @@ private:
     std::vector<Account> accounts_;
     FlatMap<uint64_t, Limits> symbolLimits_;
     FlatMap<uint64_t, OpenOrder> openOrders_;
-    FlatMap<uint64_t, int64_t> positions_;       // (acct,sym) -> signed notional
+    FlatMap<uint64_t, pos::Position> positions_;   // (acct,sym) -> quantity and average cost
+    uint64_t lastFillSeq_ = 0, rebases_ = 0, corrections_ = 0, stale_ = 0;
     FlatMap<uint64_t, Locate> locates_;
     util::FlatSet64 clOrdIds_;
     std::array<int64_t, 8> marginBps_{};

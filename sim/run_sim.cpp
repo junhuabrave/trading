@@ -122,6 +122,21 @@ int main(int argc, char** argv) {
         hex(v.finalHash, 8).c_str(), v.finalHash == s.finalHash ? "identical" : "DIFFERENT");
     if (v.mismatches || v.finalHash != s.finalHash) { std::printf("FAIL: %s\n", v.first.c_str()); rc = 1; }
 
+    // PK-1. The position keeper and the risk engine fold the same fills with the same function, so
+    // at every checkpoint the risk engine has kept up with, the keeper's figures must be its own.
+    std::printf("positions: %llu held, %llu snapshots published; risk took %llu of them (%llu older than its last fill, skipped) and disagreed with %llu\n",
+                (unsigned long long)v.pkPositions, (unsigned long long)v.pkSnapshots, (unsigned long long)v.riskRebases,
+                (unsigned long long)v.riskStale, (unsigned long long)v.riskCorrections);
+    if (v.pkSnapshots == 0 || v.riskRebases == 0) { std::printf("FAIL: the keeper published nothing the risk engine could check\n"); rc = 1; }
+    if (v.riskCorrections) { std::printf("FAIL: the risk engine and the position keeper disagree about a position\n"); rc = 1; }
+    const auto& rs = v.restart;
+    std::printf("restart: risk engine started from the keeper's snapshots at checkpoint seq %llu (%llu positions), folded %llu fills after it; "
+                "%llu positions and account totals compared with the engine that ran from the open, %llu differ\n",
+                (unsigned long long)rs.atSeq, (unsigned long long)rs.loaded, (unsigned long long)rs.foldedAfter,
+                (unsigned long long)rs.compared, (unsigned long long)rs.differ);
+    if (rs.atSeq == 0 || rs.loaded == 0 || rs.foldedAfter == 0) { std::printf("FAIL: the restart drill had nothing to restart from\n"); rc = 1; }
+    if (rs.differ || rs.corrections) { std::printf("FAIL: a risk engine restarted mid-day does not reach the same exposure\n"); rc = 1; }
+
     if (c.drill == "torn-tail") {
         // append a partial frame to the active core segment, reopen, resume the sequencer, replay
         Journal j(c.workdir + "/core.jnl", 0, 1, c.segmentBytes);
