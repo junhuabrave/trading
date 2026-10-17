@@ -725,6 +725,7 @@ public:
         // latest snapshot of every position (and account) published as of it or earlier.
         std::map<uint64_t, std::vector<std::byte>> latest;
         coreJ.replay(1, 0, [&](const FrameHeader* f) {
+            risk.restoreAction(f, at);                     // a corporate action the snapshots do not yet reflect
             if (f->sourceId != pk::SOURCE) return;
             uint64_t k = 0;
             if (auto* p = as<PositionSnapshot>(f)) { if (p->asOfSeq > at) return; k = pos::positionKey(p->accountIdx, p->symbolIdx); }

@@ -13,7 +13,7 @@
 #include "refdata.hpp"
 #include "flatmap.hpp"
 #include "money.hpp"
-#include "position.hpp"
+#include "corpaction.hpp"
 #include <vector>
 #include <array>
 
@@ -74,6 +74,7 @@ public:
     // Feed every core-stream frame here (before or after evaluate, in sequence order).
     // Returns true if consumed.
     bool apply(const FrameHeader* h) noexcept {
+        actions_.onFrame(h, [this](const CorporateActionRecord& r) { onAction(r); });   // the keeper adjusts at this same frame
         if (rd_.apply(h)) return true;
         if (auto* m = as<LimitUpdate>(h)) {
             if (m->accountIdx == 0 && m->symbolIdx == 0) firm_.from(*m);
@@ -121,6 +122,11 @@ public:
         return false;
     }
 
+    // An engine starting from the keeper's snapshots as of asOfSeq is given every CorporateAction
+    // sequenced up to then, so that one taking effect later still does, and one already in the
+    // snapshots is not applied twice.
+    void restoreAction(const FrameHeader* h, uint64_t asOfSeq) { actions_.restore(h, asOfSeq); }
+
     // ---------------------------------------------------------------- the decisions
     // Fills `out` and updates internal state exactly as if `out` had been sequenced.
     // Returns the verdict. Deterministic given the sequence of apply() calls before it.
@@ -161,6 +167,7 @@ public:
     uint64_t positionRebases() const noexcept { return rebases_; }              // PositionSnapshots applied
     uint64_t positionCorrections() const noexcept { return corrections_; }      // ...that disagreed with our own fold
     uint64_t staleSnapshots() const noexcept { return stale_; }                 // ...older than a fill we had folded
+    const pos::ActionSchedule& actions() const noexcept { return actions_; }
     int64_t locateRemaining(uint64_t id) const noexcept { const Locate* l = locates_.find(id); return l ? l->remaining : -1; }
     int64_t openLeaves(uint64_t orderId) const noexcept { const OpenOrder* o = openOrders_.find(orderId); return o ? o->leaves : -1; }
     bool accountKnown(uint32_t acct) const noexcept { return acct < MAX_ACCOUNTS && accounts_[acct].known; }
@@ -412,6 +419,31 @@ private:
         a.netPosition += after - before;
         cur = next;
     }
+    // A corporate action on every position held in its symbol, with the keeper's arithmetic. The
+    // order is the table's, which is safe: each position's result depends only on itself.
+    void onAction(const CorporateActionRecord& r) {
+        if (pos::effectOf(r) != pos::Effect::Move) {
+            positions_.forEach([&](uint64_t k, pos::Position& p) {
+                if (uint32_t(k) != r.symbolIdx || p.qty == 0) return;
+                pos::Position next = p;
+                pos::adjust(next, r);
+                setPosition(uint32_t(k >> 32), p, next);
+            });
+            return;
+        }
+        moving_.clear();                                   // the table cannot take inserts while it is walked
+        positions_.forEach([&](uint64_t k, const pos::Position& p) { if (uint32_t(k) == r.symbolIdx && p.qty != 0) moving_.push_back(k); });
+        for (uint64_t k : moving_) {
+            const uint32_t acct = uint32_t(k >> 32);
+            pos::Position* from = positions_.find(k);
+            const pos::Position moved = *from;
+            setPosition(acct, *from, pos::Position{});
+            pos::Position& to = positions_[key(acct, r.newSymbolIdx)];
+            pos::Position next = to;
+            pos::merge(next, moved);
+            setPosition(acct, to, next);
+        }
+    }
     // Fills move quantity into position at average cost, folded from the report itself so a fill
     // counts even for an order this engine started too late to see accepted; and they reduce the
     // open commitment of an order it did see. Buying power is released only for the unfilled
@@ -465,6 +497,8 @@ private:
     FlatMap<uint64_t, Limits> symbolLimits_;
     FlatMap<uint64_t, OpenOrder> openOrders_;
     FlatMap<uint64_t, pos::Position> positions_;   // (acct,sym) -> quantity and average cost
+    pos::ActionSchedule actions_;
+    std::vector<uint64_t> moving_;
     uint64_t lastFillSeq_ = 0, rebases_ = 0, corrections_ = 0, stale_ = 0;
     FlatMap<uint64_t, Locate> locates_;
     util::FlatSet64 clOrdIds_;

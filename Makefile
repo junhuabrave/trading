@@ -64,7 +64,7 @@ build/test_book: tests/test_book.cpp core/md/*.hpp sim/itch_sim.hpp core/refdata
 build/test_router: tests/test_router.cpp core/router/*.hpp core/md/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
 
-build/test_poskeeper: tests/test_poskeeper.cpp core/poskeeper/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/test_poskeeper: tests/test_poskeeper.cpp core/poskeeper/*.hpp core/risk/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@ -lpthread
 
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
@@ -129,8 +129,8 @@ test: check all build/refdata-diff.log
 	./build/test_book build/refdata-20260915-v1.bin build/booktest
 	@echo "== router: the cost model on worked examples, and named market shapes with a right answer"
 	./build/test_router build/refdata-20260915-v1.bin build/routertest
-	@echo "== position keeper: the fold by hand, checkpoints, the shared view under a writer, replay"
-	./build/test_poskeeper build/postest
+	@echo "== position keeper: the fold by hand, checkpoints, the shared view under a writer, replay, corporate actions"
+	./build/test_poskeeper build/postest build/refdata-20260915-v1.bin build/refdata-diff.log
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario, the resting strategies, two lit venues"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json

@@ -1,8 +1,10 @@
 // core/poskeeper/poskeeper.hpp : the position keeper's hot view.
 //
-// Positions by (account, symbol), folded from every client-level fill on the core stream, and each
-// account's gross and net exposure across them. At every Checkpoint it publishes a PositionSnapshot
-// for each position that changed since the last one and an ExposureSnapshot for each account that
+// Positions by (account, symbol), folded from every client-level fill on the core stream and adjusted
+// by every corporate action at the sequence number it takes effect (corpaction.hpp), and each
+// account's gross and net exposure across them. At every Checkpoint it publishes a
+// CorporateActionApplied for each position an action adjusted since the last one, a
+// PositionSnapshot for each position that changed and an ExposureSnapshot for each account that
 // did, stamped as of the checkpoint's sequence: what an engine starting mid-day loads instead of
 // replaying the day. The same figures are kept in a shared segment under a seqlock per record, for
 // the market maker and the margin engine, which read them without asking.
@@ -10,7 +12,7 @@
 // Deterministic: it reacts only to sequenced frames, and it publishes in the order positions first
 // changed, never in a hash table's order, so a replay emits the same frames byte for byte.
 #pragma once
-#include "position.hpp"
+#include "corpaction.hpp"
 #include "flatmap.hpp"
 #include "trading.hpp"
 #include "blake3.h"
@@ -156,8 +158,13 @@ public:
     // Every core-stream frame, in sequence order. Emits only at a Checkpoint.
     template <class E>
     void apply(const FrameHeader* f, E&& emit) {
-        if (const auto* e = as<ExecReport>(f)) { if (e->childOrderId == 0) onExec(*e); return; }
-        if (as<Checkpoint>(f)) publish(f->seq, emit);
+        // What the frame is, read before an action can run: GCC cannot otherwise see that adjusting
+        // positions leaves the frame alone, and warns about reading a Checkpoint as an ExecReport.
+        const auto* e = as<ExecReport>(f);
+        const bool checkpoint = as<Checkpoint>(f) != nullptr;
+        actions_.onFrame(f, [this](const CorporateActionRecord& r) { onAction(r); });
+        if (e) { if (e->childOrderId == 0) onExec(*e); return; }
+        if (checkpoint) publish(f->seq, emit);
     }
 
     const Position* find(uint32_t account, uint32_t symbol) const noexcept {
@@ -183,6 +190,7 @@ public:
     uint64_t positionSnapshots() const noexcept { return positionSnapshots_; }
     uint64_t exposureSnapshots() const noexcept { return exposureSnapshots_; }
     uint64_t viewFull() const noexcept { return viewFull_; }
+    const ActionSchedule& actions() const noexcept { return actions_; }
     size_t positions() const noexcept { return entries_.size(); }
 
 private:
@@ -195,22 +203,56 @@ private:
         else if (e.execType == ExecType::TradeBust) { q = -signedQty(e.side, e.lastQty); ++busts_; }
         else return;
         if (q == 0) return;                                // a Fill that only closes the order, carrying no shares
-        const uint64_t k = positionKey(e.accountIdx, e.symbolIdx);
-        const uint32_t* ip = index_.find(k);
-        uint32_t i;
-        if (ip) i = *ip;
-        else { i = uint32_t(entries_.size()); entries_.push_back({k, Position{}, false}); index_.insert(k, i); }
-        Entry& en = entries_[i];
-        const money::i128 before = pos::exposure(en.p);
-        fill(en.p, q, e.lastPx);
-        const money::i128 after = pos::exposure(en.p);
-        if (!en.dirty) { en.dirty = true; dirtyPos_.push_back(i); }
-        if (!view_.writePosition(k, en.p)) ++viewFull_;
+        const uint32_t i = entry(positionKey(e.accountIdx, e.symbolIdx));
+        Position p = entries_[i].p;
+        fill(p, q, e.lastPx);
+        set(i, p);
+    }
 
-        const uint32_t* ia = accountIndex_.find(e.accountIdx);
+    // Every position held in the action's symbol, in the order positions first appeared.
+    void onAction(const CorporateActionRecord& r) {
+        const Effect fx = effectOf(r);
+        for (uint32_t i = 0, n = uint32_t(entries_.size()); i < n; ++i) {
+            const Position before = entries_[i].p;
+            if (uint32_t(entries_[i].key) != r.symbolIdx || before.qty == 0) continue;
+            const uint32_t acct = uint32_t(entries_[i].key >> 32);
+            CorporateActionApplied rec{}; rec.actionId = r.actionId; rec.accountIdx = acct; rec.symbolIdx = r.symbolIdx; rec.qtyBefore = before.qty;
+            if (fx == Effect::Move) {                      // the quantity carried to newSymbolIdx
+                set(i, Position{});
+                const uint32_t j = entry(positionKey(acct, r.newSymbolIdx));
+                Position to = entries_[j].p;
+                merge(to, before);
+                set(j, to);
+                rec.qtyAfter = before.qty;
+            } else {
+                Position p = before;
+                rec.cashAmount = adjust(p, r);
+                set(i, p);
+                rec.qtyAfter = p.qty;
+            }
+            applied_.push_back(rec);
+        }
+    }
+
+    uint32_t entry(uint64_t k) {
+        if (const uint32_t* ip = index_.find(k)) return *ip;
+        const uint32_t i = uint32_t(entries_.size());
+        entries_.push_back({k, Position{}, false}); index_.insert(k, i);
+        return i;
+    }
+    // A position's new figures, into the view and its account's totals, and marked for the checkpoint.
+    void set(uint32_t i, const Position& next) {
+        Entry& en = entries_[i];
+        const money::i128 before = pos::exposure(en.p), after = pos::exposure(next);
+        en.p = next;
+        if (!en.dirty) { en.dirty = true; dirtyPos_.push_back(i); }
+        if (!view_.writePosition(en.key, en.p)) ++viewFull_;
+
+        const uint32_t account = uint32_t(en.key >> 32);
+        const uint32_t* ia = accountIndex_.find(account);
         uint32_t ai;
         if (ia) ai = *ia;
-        else { ai = uint32_t(accounts_.size()); accounts_.push_back({e.accountIdx, 0, 0, false}); accountIndex_.insert(e.accountIdx, ai); }
+        else { ai = uint32_t(accounts_.size()); accounts_.push_back({account, 0, 0, false}); accountIndex_.insert(account, ai); }
         Acct& a = accounts_[ai];
         a.gross += (after < 0 ? -after : after) - (before < 0 ? -before : before);
         a.net += after - before;
@@ -220,6 +262,12 @@ private:
 
     template <class E>
     void publish(uint64_t asOfSeq, E& emit) {
+        for (const CorporateActionApplied& rec : applied_) {
+            Frame<CorporateActionApplied> c; c.init(); c.header.sourceId = p_.sourceId;
+            c.body = rec;
+            emit(&c.header);
+        }
+        applied_.clear();
         for (uint32_t i : dirtyPos_) {
             Entry& en = entries_[i];
             Frame<PositionSnapshot> s; s.init(); s.header.sourceId = p_.sourceId;
@@ -253,6 +301,8 @@ private:
     util::FlatMap<uint64_t, uint32_t> index_;
     util::FlatMap<uint64_t, uint32_t> accountIndex_;
     std::vector<uint32_t> dirtyPos_, dirtyAcct_;
+    ActionSchedule actions_;
+    std::vector<CorporateActionApplied> applied_;
     uint64_t fills_ = 0, busts_ = 0, positionSnapshots_ = 0, exposureSnapshots_ = 0, viewFull_ = 0;
 };
 
