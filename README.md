@@ -234,3 +234,11 @@ The design puts transport and archive on Aeron. `BroadcastRing` and `Journal` ha
 2. `core/md`: the vendor feed adapter (MD-12), and the golden run against a published Nasdaq sample day.
 3. OMS: Day expiry through sequenced timers, GTC carry, venue-side replace once a venue protocol supports it.
 4. Position keeper: the cold ledger and reconciliation in Go (PK-3, PK-4); re-basing the risk engine mid-session with the fills in flight accounted for (PK-5). Restarting a whole engine mid-day, open orders included, is the platform's engine-restart work.
+5. Corporate actions, after PK-2:
+   - Open orders in a split symbol: cancel or adjust day and GTC orders at the action's sequence (the OMS, with GTC carry).
+   - Locates in a split symbol: scale the quantity at the same sequence (the risk engine and the stock-loan service).
+   - The risk engine's last sale and NBBO in a symbol hit by an intraday action: re-anchor the price collar until the venues restate.
+   - Merger, stock dividend and spin-off: today they are counted and not applied. Each needs its ratio semantics agreed with the security master, plus a move or split onto one or more new indexes.
+   - Cash in lieu of fractional shares, and dividend cash at pay date: booked by the cold ledger and the cash ledger (PK-3, CO-1). The hot view drops the fraction at cost and puts dividends straight into realised.
+   - Non-USD dividends: the hot view ignores the record's currency; FX belongs with the ledger.
+   - A simulator scenario with an intraday split, so live versus replay and the restart drill run across one.
