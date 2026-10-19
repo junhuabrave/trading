@@ -676,7 +676,7 @@ public:
     struct Restart { uint64_t atSeq = 0, loaded = 0, foldedAfter = 0, compared = 0, differ = 0, corrections = 0; };
     struct VerifyResult {
         uint64_t verified = 0, mismatches = 0, frames = 0, checkpoints = 0; std::array<uint8_t, 32> finalHash{}; std::string first;
-        uint64_t pkPositions = 0, pkSnapshots = 0, riskRebases = 0, riskCorrections = 0, riskStale = 0;
+        uint64_t pkPositions = 0, pkSnapshots = 0, riskRebases = 0, riskExposureRebases = 0, riskRefolded = 0, riskCorrections = 0, riskStale = 0;
         Restart restart;
     };
     VerifyResult verify() {
@@ -705,7 +705,7 @@ public:
         r.frames = coreJ.replay(1, 0, [&](const FrameHeader* f) { eng.onCore(f); });
         r.verified = eng.verified(); r.mismatches = eng.mismatches(); r.checkpoints = eng.checkpoints(); r.finalHash = eng.hash(); r.first = eng.firstMismatch();
         r.pkPositions = eng.positions().positions(); r.pkSnapshots = eng.positions().positionSnapshots();
-        r.riskRebases = eng.risk().positionRebases(); r.riskCorrections = eng.risk().positionCorrections(); r.riskStale = eng.risk().staleSnapshots();
+        r.riskRebases = eng.risk().positionRebases(); r.riskExposureRebases = eng.risk().exposureRebases(); r.riskRefolded = eng.risk().refolded(); r.riskCorrections = eng.risk().positionCorrections(); r.riskStale = eng.risk().staleSnapshots();
         r.restart = restartDrill(snap, coreJ, eng);
         return r;
     }

@@ -22,6 +22,12 @@
 //      at its sequence, and does not apply again one the snapshots already reflect
 //   8. the day-1 to day-2 fixture pair: day-1 positions, then the security master's diff (the NVDA
 //      4:1 split and the XYZQ delisting among it), compared with the day-2 reference prices
+//
+// Re-basing the risk engine on the keeper (PK-5).
+//   9. the keeper's frames for a checkpoint sequenced only after more fills: the risk engine re-bases
+//      on every one with the fills in flight folded on, agreeing exactly; a doctored position and a
+//      doctored account total are each put right to the keeper's figure plus those fills, and
+//      counted; a ring too short to reach back to the checkpoint, or an action since it, skips
 #include "poskeeper.hpp"
 #include "risk.hpp"
 #include <array>
@@ -62,13 +68,16 @@ static Frame<CorporateAction> action(uint64_t id, CorpActionType type, uint32_t 
 
 // The keeper and a risk engine reading one sequenced stream. Every frame fed gets the next sequence
 // number; what the keeper publishes at a checkpoint is sequenced straight after it, to both.
+// With hold set, the keeper's frames wait until release(), as they would behind other traffic.
 struct Lockstep {
+    explicit Lockstep(size_t ring = 1 << 14) : risk(rd, 1 << 12, 1 << 10, ring) {}
     std::vector<std::byte> mem = std::vector<std::byte>(PositionView::bytesFor(256, 16));
     PositionKeeper pk{PositionKeeper::Params{6, 256, 16}, mem.data()};
     refdata::RefData rd;
-    risk::RiskEngine risk{rd, 1 << 12, 1 << 10};
+    risk::RiskEngine risk;
     uint64_t seq = 0;
-    std::vector<std::vector<std::byte>> published, recorded;   // the keeper's frames; every frame sequenced
+    bool hold = false;
+    std::vector<std::vector<std::byte>> published, recorded, held;   // the keeper's frames; every frame sequenced; waiting
     std::set<uint64_t> keys; std::set<uint32_t> accounts;
 
     bool feed(FrameHeader* f) {
@@ -79,9 +88,15 @@ struct Lockstep {
         pk.apply(f, [&](FrameHeader* o) { const auto* b = reinterpret_cast<const std::byte*>(o); out.emplace_back(b, b + o->frameLength); });
         risk.apply(f);
         record(f);
+        for (auto& o : out) reinterpret_cast<FrameHeader*>(o.data())->causeSeq = f->seq;
+        if (hold) { held.insert(held.end(), out.begin(), out.end()); return agree(); }
+        return sequence(out);
+    }
+    bool release() { auto out = std::move(held); held.clear(); return sequence(out); }
+    bool sequence(std::vector<std::vector<std::byte>>& out) {
         for (auto& o : out) {
             auto* h = reinterpret_cast<FrameHeader*>(o.data());
-            h->seq = ++seq; h->causeSeq = f->seq;
+            h->seq = ++seq;
             pk.apply(h, [](const FrameHeader*) {}); risk.apply(h);
             published.push_back(o); record(h);
         }
@@ -406,6 +421,77 @@ int main(int argc, char** argv) {
         const auto* p0 = as<PositionSnapshot>(hdr(L.published[2])); const auto* p1 = as<PositionSnapshot>(hdr(L.published[3]));
         CHECK(p0 && p1 && p0->symbolIdx == nvda && p1->symbolIdx == nvda);
         std::printf("fixture pair: %zu diff frames; NVDA 4:1 on both accounts matches the day-2 reference price; XYZQ delisted and still held\n", frames);
+    }
+
+    // ---- 9: re-basing on the keeper with fills in flight
+    {
+        auto fillOn = [](Lockstep& L, uint32_t acct, uint32_t sym, Side side, int64_t qty, int64_t px) { auto r = report(acct, sym, side, ExecType::Fill, qty, px); return L.feed(&r.header); };
+        // The same day four ways: as it is, with the keeper's figure for (42, 90) one share out, with its
+        // account totals a dollar out, and with a ring of two fills.
+        enum class Doctor { None, Position, Account };
+        auto day = [&](Lockstep& L, Doctor doctor) {
+            bool ok = fillOn(L, 42, 90, Side::Buy, 100, 10 * USD) && fillOn(L, 42, 91, Side::SellShort, 50, 20 * USD) && fillOn(L, 7, 90, Side::Buy, 10, 9 * USD);
+            L.hold = true;
+            ok = ok && L.checkpoint();
+            // in flight: sequenced after the checkpoint, before the keeper's frames for it
+            ok = ok && fillOn(L, 42, 90, Side::Buy, 300, 12 * USD) && fillOn(L, 42, 91, Side::Buy, 20, 19 * USD) && fillOn(L, 42, 92, Side::Buy, 5, USD);
+            for (auto& b : L.held) {
+                auto* h = reinterpret_cast<FrameHeader*>(b.data());
+                if (auto* p = const_cast<PositionSnapshot*>(as<PositionSnapshot>(h)); p && doctor == Doctor::Position && p->accountIdx == 42 && p->symbolIdx == 90) p->qty += 1;
+                if (auto* x = const_cast<ExposureSnapshot*>(as<ExposureSnapshot>(h)); x && doctor == Doctor::Account && x->accountIdx == 42) x->netExposure += USD;
+            }
+            L.hold = false;
+            (void)L.release();
+            return ok;
+        };
+        {
+            Lockstep L;
+            CHECK(day(L, Doctor::None) && L.agree());
+            // three positions and two accounts re-based; the in-flight fills on (42,90) and (42,91) folded onto them
+            CHECK(L.risk.positionRebases() == 3 && L.risk.exposureRebases() == 2 && L.risk.refolded() == 2 && L.risk.staleSnapshots() == 0);
+            CHECK(L.risk.positionCorrections() == 0);
+        }
+        {
+            Lockstep L;
+            CHECK(day(L, Doctor::Position));
+            // the keeper's 101 at $10, plus 300 at $12 in flight: 401 at (1010 + 3600) / 401 = $11.4962593...
+            const Position p = L.risk.positionOf(42, 90);
+            // and the keeper's own account total, left alone, now disagrees with the doctored position: two
+            CHECK(L.risk.positionCorrections() == 2 && p.qty == 401 && p.avgCost == 1'149'625'935);
+        }
+        {
+            Lockstep L;
+            CHECK(day(L, Doctor::Account));
+            money::i128 g = 0, n = 0; L.pk.exposure(42, g, n);
+            CHECK(L.risk.positionCorrections() == 1 && L.risk.netPosition(42) == n + USD && L.risk.grossPosition(42) == g);
+        }
+        {
+            Lockstep L(2);                                               // three fills in flight, two remembered
+            CHECK(day(L, Doctor::None));
+            CHECK(L.risk.staleSnapshots() == 5 && L.risk.positionRebases() == 0 && L.agree());
+        }
+        {
+            Lockstep L;                                                  // a dividend after the checkpoint
+            CHECK(fillOn(L, 42, 93, Side::Buy, 100, 10 * USD));
+            L.hold = true;
+            CHECK(L.checkpoint());
+            { auto a = action(9001, CorpActionType::CashDividend, 93, 0, 0, USD); CHECK(L.feed(&a.header)); }
+            L.hold = false;
+            CHECK(L.release() && L.risk.staleSnapshots() == 2 && L.risk.positionRebases() == 0);
+            CHECK(L.checkpoint() && L.risk.positionRebases() == 1);     // the next checkpoint's figures are taken
+        }
+        {
+            Lockstep L;                                                  // totals the keeper can only send in 1e-4
+            CHECK(fillOn(L, 5, 94, Side::Buy, 1'000'000'000, 100 * USD) && fillOn(L, 5, 95, Side::Buy, 1, 12'345));
+            L.hold = true;
+            CHECK(L.checkpoint());
+            CHECK(fillOn(L, 5, 95, Side::Buy, 1, 3));                     // in flight, worth less than the coarse unit
+            bool coarse = false;
+            for (auto& b : L.held) if (auto* x = as<ExposureSnapshot>(hdr(b))) coarse = x->moneyScale == MoneyScale::Unit1e4;
+            L.hold = false;
+            CHECK(coarse && L.release() && L.risk.exposureRebases() == 1 && L.risk.positionCorrections() == 0);
+        }
+        std::printf("re-base: every snapshot taken with the fills in flight folded on; a doctored position and account total put right and counted\n");
     }
 
     std::printf("position keeper tests ok\n");

@@ -14,8 +14,9 @@
 #include "flatmap.hpp"
 #include "money.hpp"
 #include "corpaction.hpp"
-#include <vector>
 #include <array>
+#include <bit>
+#include <vector>
 
 namespace trading::risk {
 
@@ -55,10 +56,12 @@ public:
     static constexpr size_t RATE_BUCKETS = 10;
     static constexpr size_t DUP_RING = 8;
 
-    // expectedOrders: orders per day (the clOrdId set must hold them all); expectedOpen: concurrently open.
-    explicit RiskEngine(RefData& rd, size_t expectedOrders = 1 << 20, size_t expectedOpen = 1 << 16)
+    // expectedOrders: orders per day (the clOrdId set must hold them all); expectedOpen: concurrently
+    // open; foldedRing: the fills remembered for re-basing on the keeper's snapshots (a power of two),
+    // which must cover the fills sequenced between a checkpoint and the keeper's frames for it.
+    explicit RiskEngine(RefData& rd, size_t expectedOrders = 1 << 20, size_t expectedOpen = 1 << 16, size_t foldedRing = 1 << 14)
         : rd_(rd), accounts_(MAX_ACCOUNTS), symbolLimits_(4096), openOrders_(expectedOpen), positions_(1 << 16),
-          locates_(1 << 16), clOrdIds_(expectedOrders),
+          ring_(std::bit_ceil(foldedRing)), locates_(1 << 16), clOrdIds_(expectedOrders),
           bid_(MAX_SYMBOLS, 0), ask_(MAX_SYMBOLS, 0), lastTrade_(MAX_SYMBOLS, 0), lastTradeTs_(MAX_SYMBOLS, 0), lastTradeVenue_(MAX_SYMBOLS, 0), halted_(MAX_SYMBOLS, 0), strategyKilled_(65536, 0) {
         // margin requirement per marginClass, in bps of notional: 0 unused, 1 Reg T 50%, 2 100%, 3 100% (new issue / low priced), 4 30% (portfolio)
         marginBps_ = {0, 5000, 10000, 10000, 3000, 10000, 10000, 10000};
@@ -74,7 +77,7 @@ public:
     // Feed every core-stream frame here (before or after evaluate, in sequence order).
     // Returns true if consumed.
     bool apply(const FrameHeader* h) noexcept {
-        actions_.onFrame(h, [this](const CorporateActionRecord& r) { onAction(r); });   // the keeper adjusts at this same frame
+        actions_.onFrame(h, [this, h](const CorporateActionRecord& r) { lastActionSeq_ = h->seq; onAction(r); });   // the keeper adjusts at this same frame
         if (rd_.apply(h)) return true;
         if (auto* m = as<LimitUpdate>(h)) {
             if (m->accountIdx == 0 && m->symbolIdx == 0) firm_.from(*m);
@@ -107,15 +110,7 @@ public:
             return true;
         }
         if (auto* m = as<PositionSnapshot>(h)) { onPositionSnapshot(*m); return true; }
-        if (auto* m = as<ExposureSnapshot>(h)) {
-            // The position keeper's account totals, for an engine starting from them. It carries no
-            // sequence to say how current it is, so once this engine has folded a fill of its own it
-            // keeps its figures; PositionSnapshot, which does carry one, is how they are checked.
-            // The open-order fields are the keeper's reconciliation of our state; ours stay authoritative.
-            if (m->accountIdx < MAX_ACCOUNTS && lastFillSeq_ == 0) { auto& a = accounts_[m->accountIdx];
-                a.grossPosition = money::toNano(m->grossExposure, m->moneyScale); a.netPosition = money::toNano(m->netExposure, m->moneyScale); }
-            return true;
-        }
+        if (auto* m = as<ExposureSnapshot>(h)) { onExposureSnapshot(*m, h->causeSeq); return true; }
         if (auto* m = as<ExecReport>(h)) { if (m->childOrderId == 0) onExec(*m, h->seq); return true; }   // parent-level only; venue-level reports are the OMS's input
         if (auto* m = as<OrderState>(h)) { onOrderState(*m); return true; }
         if (auto* m = as<RiskDecision>(h)) { (void)m; return true; }   // our own output on replay; state was updated at evaluate()
@@ -164,9 +159,11 @@ public:
     // The position part of an account's exposure, without its open orders.
     money::i128 grossPosition(uint32_t acct) const noexcept { return accounts_[acct].grossPosition; }
     money::i128 netPosition(uint32_t acct) const noexcept { return accounts_[acct].netPosition; }
-    uint64_t positionRebases() const noexcept { return rebases_; }              // PositionSnapshots applied
-    uint64_t positionCorrections() const noexcept { return corrections_; }      // ...that disagreed with our own fold
-    uint64_t staleSnapshots() const noexcept { return stale_; }                 // ...older than a fill we had folded
+    uint64_t positionRebases() const noexcept { return rebases_; }              // PositionSnapshots re-based on
+    uint64_t exposureRebases() const noexcept { return exposureRebases_; }      // ExposureSnapshots re-based on
+    uint64_t positionCorrections() const noexcept { return corrections_; }      // ...either kind that disagreed with our own fold
+    uint64_t staleSnapshots() const noexcept { return stale_; }                 // ...either kind that could not be re-based
+    uint64_t refolded() const noexcept { return refolded_; }                    // fills in flight folded onto a snapshot
     const pos::ActionSchedule& actions() const noexcept { return actions_; }
     int64_t locateRemaining(uint64_t id) const noexcept { const Locate* l = locates_.find(id); return l ? l->remaining : -1; }
     int64_t openLeaves(uint64_t orderId) const noexcept { const OpenOrder* o = openOrders_.find(orderId); return o ? o->leaves : -1; }
@@ -396,21 +393,55 @@ private:
         return RiskVerdict::Accept;
     }
 
-    // The position keeper's figure for one position, as of a sequence number. Taken when this
-    // engine has folded no fill after that sequence - at a start from the keeper's snapshots, or
-    // at any checkpoint the engine has kept up with, where both have folded the same fills with the
-    // same function and the figures must agree. A disagreement is applied and counted, because it
-    // means one of the two folds is wrong. A snapshot older than our last fill is not applied: it
-    // cannot know about that fill.
+    // Re-basing on the keeper (PK-5). Its figures are as of a checkpoint; by the time they are
+    // sequenced this engine may have folded more fills - the fills in flight. The recomputed figure
+    // is the keeper's plus those fills, from the ring of what this engine folded, so it is directly
+    // comparable with the incremental one: both fold the same fills with the same function and
+    // must agree exactly. A disagreement is applied and counted, because it means one of the two
+    // folds is wrong. Loading at a start, with nothing folded yet, is not a disagreement.
+    //
+    // A snapshot is not used when the ring no longer reaches back to its checkpoint, or when a
+    // corporate action took effect after it, which the ring does not replay; the next one will be.
+    bool coversSince(uint64_t asOfSeq) const noexcept { return evictedUpTo_ <= asOfSeq && lastActionSeq_ <= asOfSeq; }
+    // The first ring entry folded after asOfSeq.
+    uint64_t firstAfter(uint64_t asOfSeq) const noexcept {
+        uint64_t i = ringCount_;
+        while (i > 0 && i + ring_.size() > ringCount_ && ring_[(i - 1) & (ring_.size() - 1)].seq > asOfSeq) --i;
+        return i;
+    }
     void onPositionSnapshot(const PositionSnapshot& p) noexcept {
         if (p.accountIdx >= MAX_ACCOUNTS) return;
-        if (p.asOfSeq < lastFillSeq_) { ++stale_; return; }
-        pos::Position& cur = positions_[key(p.accountIdx, p.symbolIdx)];
+        if (!coversSince(p.asOfSeq)) { ++stale_; return; }
         pos::Position next{p.qty, p.avgCost, p.realizedPnl};
-        // Loading at a start is not a disagreement; differing from a figure we folded ourselves is.
+        for (uint64_t i = firstAfter(p.asOfSeq); i < ringCount_; ++i) {
+            const Folded& f = ring_[i & (ring_.size() - 1)];
+            if (f.acct == p.accountIdx && f.sym == p.symbolIdx) { pos::fill(next, f.qty, f.px); ++refolded_; }
+        }
+        pos::Position& cur = positions_[key(p.accountIdx, p.symbolIdx)];
         if (lastFillSeq_ != 0 && (cur.qty != next.qty || cur.avgCost != next.avgCost || cur.realized != next.realized)) ++corrections_;
         ++rebases_;
         setPosition(p.accountIdx, cur, next);
+    }
+    // The keeper's account totals, as of the checkpoint that caused them, plus what the fills in
+    // flight did to this account's exposure. Compared in the snapshot's own unit, so a total the
+    // keeper had to send in 1e-4 is not a disagreement over the digits it could not carry. The
+    // open-order fields are the keeper's reconciliation of our state; ours stay authoritative.
+    void onExposureSnapshot(const ExposureSnapshot& x, uint64_t asOfSeq) noexcept {
+        if (x.accountIdx >= MAX_ACCOUNTS) return;
+        if (!coversSince(asOfSeq)) { ++stale_; return; }
+        i128 dGross = 0, dNet = 0;
+        for (uint64_t i = firstAfter(asOfSeq); i < ringCount_; ++i) {
+            const Folded& f = ring_[i & (ring_.size() - 1)];
+            if (f.acct == x.accountIdx) { dGross += f.dGross; dNet += f.dNet; }
+        }
+        Account& a = accounts_[x.accountIdx];
+        const i128 unit = x.moneyScale == MoneyScale::Unit1e4 ? money::PER_1E4 : 1;
+        const bool agree = (a.grossPosition - dGross) / unit == x.grossExposure && (a.netPosition - dNet) / unit == x.netExposure;
+        ++exposureRebases_;
+        if (agree) return;
+        if (lastFillSeq_ != 0) ++corrections_;
+        a.grossPosition = money::toNano(x.grossExposure, x.moneyScale) + dGross;
+        a.netPosition = money::toNano(x.netExposure, x.moneyScale) + dNet;
     }
     void setPosition(uint32_t acct, pos::Position& cur, const pos::Position& next) noexcept {
         Account& a = accounts_[acct];
@@ -460,6 +491,11 @@ private:
             pos::Position& cur = positions_[key(acct, sym)];
             pos::Position next = cur;
             pos::fill(next, filled ? q : -q, e.lastPx);
+            const i128 before = pos::exposure(cur), after = pos::exposure(next);
+            Folded& slot = ring_[ringCount_ & (ring_.size() - 1)];
+            if (ringCount_ >= ring_.size()) evictedUpTo_ = slot.seq;   // the oldest fill is forgotten
+            slot = Folded{seq, acct, sym, filled ? q : -q, e.lastPx, (after < 0 ? -after : after) - (before < 0 ? -before : before), after - before};
+            ++ringCount_;
             setPosition(acct, cur, next);
             lastFillSeq_ = seq;
         }
@@ -499,7 +535,11 @@ private:
     FlatMap<uint64_t, pos::Position> positions_;   // (acct,sym) -> quantity and average cost
     pos::ActionSchedule actions_;
     std::vector<uint64_t> moving_;
-    uint64_t lastFillSeq_ = 0, rebases_ = 0, corrections_ = 0, stale_ = 0;
+    // every fill this engine folded, newest last, for re-basing on the keeper's snapshots
+    struct Folded { uint64_t seq; uint32_t acct, sym; int64_t qty, px; i128 dGross, dNet; };
+    std::vector<Folded> ring_;
+    uint64_t ringCount_ = 0, evictedUpTo_ = 0, lastActionSeq_ = 0;
+    uint64_t lastFillSeq_ = 0, rebases_ = 0, exposureRebases_ = 0, corrections_ = 0, stale_ = 0, refolded_ = 0;
     FlatMap<uint64_t, Locate> locates_;
     util::FlatSet64 clOrdIds_;
     std::array<int64_t, 8> marginBps_{};

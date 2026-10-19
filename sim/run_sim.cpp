@@ -122,13 +122,17 @@ int main(int argc, char** argv) {
         hex(v.finalHash, 8).c_str(), v.finalHash == s.finalHash ? "identical" : "DIFFERENT");
     if (v.mismatches || v.finalHash != s.finalHash) { std::printf("FAIL: %s\n", v.first.c_str()); rc = 1; }
 
-    // PK-1. The position keeper and the risk engine fold the same fills with the same function, so
-    // at every checkpoint the risk engine has kept up with, the keeper's figures must be its own.
-    std::printf("positions: %llu held, %llu snapshots published; risk took %llu of them (%llu older than its last fill, skipped) and disagreed with %llu\n",
+    // PK-1, PK-5. The position keeper and the risk engine fold the same fills with the same function,
+    // so every snapshot the keeper publishes, plus the fills sequenced after its checkpoint, must be
+    // exactly the risk engine's own figure: re-based on, never skipped, never a correction.
+    std::printf("positions: %llu held, %llu snapshots published; risk re-based on %llu of them and %llu account totals, "
+                "folding %llu fills in flight onto them; %llu skipped, %llu disagreed\n",
                 (unsigned long long)v.pkPositions, (unsigned long long)v.pkSnapshots, (unsigned long long)v.riskRebases,
+                (unsigned long long)v.riskExposureRebases, (unsigned long long)v.riskRefolded,
                 (unsigned long long)v.riskStale, (unsigned long long)v.riskCorrections);
-    if (v.pkSnapshots == 0 || v.riskRebases == 0) { std::printf("FAIL: the keeper published nothing the risk engine could check\n"); rc = 1; }
-    if (v.riskCorrections) { std::printf("FAIL: the risk engine and the position keeper disagree about a position\n"); rc = 1; }
+    if (v.pkSnapshots == 0 || v.riskRebases == 0 || v.riskExposureRebases == 0) { std::printf("FAIL: the keeper published nothing the risk engine could check\n"); rc = 1; }
+    if (v.riskStale) { std::printf("FAIL: the risk engine could not re-base on a snapshot the keeper published\n"); rc = 1; }
+    if (v.riskCorrections) { std::printf("FAIL: the risk engine and the position keeper disagree about a position or an account total\n"); rc = 1; }
     const auto& rs = v.restart;
     std::printf("restart: risk engine started from the keeper's snapshots at checkpoint seq %llu (%llu positions), folded %llu fills after it; "
                 "%llu positions and account totals compared with the engine that ran from the open, %llu differ\n",
