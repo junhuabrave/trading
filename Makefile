@@ -3,12 +3,12 @@ CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra -Werror -pedantic
 B3FLAGS   = -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DBLAKE3_USE_NEON=0
-INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Icore/md -Icore/router -Icore/poskeeper -Isim -Ithird_party/blake3
+INC       = -Igen/cpp -Icore/util -Icore/refdata -Icore/seq -Icore/risk -Icore/oms -Icore/md -Icore/router -Icore/poskeeper -Icore/venue -Isim -Ithird_party/blake3
 B3OBJ     = build/blake3.o build/blake3_dispatch.o build/blake3_portable.o
 
 .PHONY: all gen check test clean bench benchgate bench-baseline fuzz gotest baselines goldens
 
-all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/test_book build/test_router build/test_poskeeper build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/bench_router
+all: gen build/test_codec build/test_refdata build/test_seq build/test_risk build/test_oms build/test_md build/test_arb build/test_decode build/test_selector build/test_book build/test_router build/test_poskeeper build/test_ouch build/run_sim build/bench build/bench_seq build/bench_risk build/bench_oms build/bench_md build/bench_decode build/bench_router
 
 gen: gen/cpp/trading.hpp
 gen/cpp/trading.hpp gen/py/trading.py gen/go/trading.go gen/layout.md: schema/trading.xml schema/reasons.csv tools/sbegen.py
@@ -66,6 +66,9 @@ build/test_router: tests/test_router.cpp core/router/*.hpp core/md/*.hpp core/re
 
 build/test_poskeeper: tests/test_poskeeper.cpp core/poskeeper/*.hpp core/risk/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@ -lpthread
+
+build/test_ouch: tests/test_ouch.cpp core/venue/*.hpp core/util/*.hpp | build
+	$(CXX) $(CXXFLAGS) $(INC) $< -o $@
 
 build/test_oms: tests/test_oms.cpp core/oms/*.hpp core/refdata/*.hpp core/util/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) $(CXXFLAGS) $(INC) $< $(B3OBJ) -o $@
@@ -131,6 +134,8 @@ test: check all build/refdata-diff.log
 	./build/test_router build/refdata-20260915-v1.bin build/routertest
 	@echo "== position keeper: the fold by hand, checkpoints, the shared view under a writer, replay, corporate actions"
 	./build/test_poskeeper build/postest build/refdata-20260915-v1.bin build/refdata-diff.log
+	@echo "== venue protocol: OUCH 5.0 and SoupBinTCP against vectors from the specifications' field tables"
+	./build/test_ouch
 	@echo "== simulator: golden runs against stored baselines, drills, scripted scenario, the resting strategies, two lit venues"
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/random-day --scenario random-day --steps 6000 --baseline sim/baselines/random-day.json
 	./build/run_sim build/refdata-20260915-v1.bin build/sim/adversarial --scenario adversarial --steps 4000 --adversarial --baseline sim/baselines/adversarial.json
@@ -157,13 +162,14 @@ benchgate: $(BENCH_BINS) build/refdata-20260915-v1.bin
 bench-baseline: $(BENCH_BINS) build/refdata-20260915-v1.bin
 	python3 tools/bench.py run --write
 
-# libFuzzer targets (clang only): journal recovery and the snapshot loader over corrupt input
-fuzz: build/fuzz_journal build/fuzz_snapshot build/fuzz_feedjournal
+# libFuzzer targets (clang only): journal recovery and the snapshot loader over corrupt input, and the OUCH decoders over hostile bytes
+fuzz: build/fuzz_journal build/fuzz_snapshot build/fuzz_feedjournal build/fuzz_ouch
 	./build/fuzz_journal -max_total_time=$(FUZZ_SECONDS) -max_len=8192
 	./build/fuzz_snapshot -max_total_time=$(FUZZ_SECONDS) -max_len=8192
 	./build/fuzz_feedjournal -max_total_time=$(FUZZ_SECONDS) -max_len=8192
+	./build/fuzz_ouch -max_total_time=$(FUZZ_SECONDS) -max_len=8192
 FUZZ_SECONDS ?= 30
-build/fuzz_%: tests/fuzz/fuzz_%.cpp core/seq/*.hpp core/md/*.hpp core/refdata/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
+build/fuzz_%: tests/fuzz/fuzz_%.cpp core/seq/*.hpp core/md/*.hpp core/refdata/*.hpp core/venue/*.hpp gen/cpp/trading.hpp $(B3OBJ) | build
 	$(CXX) -std=c++23 -O1 -g -fsanitize=fuzzer,address,undefined $(INC) $< $(B3OBJ) -o $@
 
 # Go codec round trip (needs a Go toolchain; CI runs it)

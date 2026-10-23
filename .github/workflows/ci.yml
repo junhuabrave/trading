@@ -34,7 +34,7 @@ jobs:
           # std::runtime_error's destructor, not our code
           ASAN_OPTIONS: detect_leaks=0:alloc_dealloc_mismatch=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-      - name: fuzz journal recovery and snapshot loader
+      - name: fuzz journal recovery, snapshot loader and the OUCH decoders
         run: make fuzz CXX=clang++-18 CC=clang-18 FUZZ_SECONDS=60
 
   go-codec:
