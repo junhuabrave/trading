@@ -134,7 +134,8 @@ private:
 
 // ---- field access, shared by encode and decode -----------------------------------------------
 // Each message lists its fields once, as (offset, member) pairs to a visitor that either writes
-// them to the wire or reads them from it.
+// them to the wire or reads them from it. A static template over the message rather than C++23's
+// explicit object parameter, which g++ 13 (the CI compiler) does not have.
 struct Writer {
     uint8_t* p;
     template <class T> void operator()(size_t off, const T& v) const noexcept {
@@ -160,7 +161,7 @@ struct EnterOrder {
     uint32_t userRefNum = 0; char side = 0; uint32_t quantity = 0; Alpha<8> symbol{}; uint64_t price = 0;
     char timeInForce = 0, display = 0, capacity = 0, interMarketSweep = 0, crossType = 0; Alpha<14> clOrdId{};
     Options opts;
-    void fields(this auto& m, auto& f) {
+    static void fields(auto& m, auto& f) {
         f(1, m.userRefNum); f(5, m.side); f(6, m.quantity); f(10, m.symbol); f(18, m.price); f(26, m.timeInForce);
         f(27, m.display); f(28, m.capacity); f(29, m.interMarketSweep); f(30, m.crossType); f(31, m.clOrdId);
     }
@@ -171,7 +172,7 @@ struct ReplaceOrder {
     uint32_t origUserRefNum = 0, userRefNum = 0, quantity = 0; uint64_t price = 0;
     char timeInForce = 0, display = 0, interMarketSweep = 0; Alpha<14> clOrdId{};
     Options opts;
-    void fields(this auto& m, auto& f) {
+    static void fields(auto& m, auto& f) {
         f(1, m.origUserRefNum); f(5, m.userRefNum); f(9, m.quantity); f(13, m.price); f(21, m.timeInForce);
         f(22, m.display); f(23, m.interMarketSweep); f(24, m.clOrdId);
     }
@@ -181,41 +182,41 @@ struct CancelOrder {
     static constexpr char TYPE = 'X'; static constexpr size_t FIXED = 9; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint32_t userRefNum = 0, quantity = 0;              // the new intended size; zero cancels what is left
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.userRefNum); f(5, m.quantity); }
+    static void fields(auto& m, auto& f) { f(1, m.userRefNum); f(5, m.quantity); }
     bool operator==(const CancelOrder&) const = default;
 };
 struct ModifyOrder {
     static constexpr char TYPE = 'M'; static constexpr size_t FIXED = 10; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint32_t userRefNum = 0; char side = 0; uint32_t quantity = 0;
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.userRefNum); f(5, m.side); f(6, m.quantity); }
+    static void fields(auto& m, auto& f) { f(1, m.userRefNum); f(5, m.side); f(6, m.quantity); }
     bool operator==(const ModifyOrder&) const = default;
 };
 struct MassCancelRequest {
     static constexpr char TYPE = 'C'; static constexpr size_t FIXED = 17; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint32_t userRefNum = 0; Alpha<4> firm{}; Alpha<8> symbol{};   // symbol all spaces: every symbol
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.userRefNum); f(5, m.firm); f(9, m.symbol); }
+    static void fields(auto& m, auto& f) { f(1, m.userRefNum); f(5, m.firm); f(9, m.symbol); }
     bool operator==(const MassCancelRequest&) const = default;
 };
 struct DisableOrderEntryRequest {
     static constexpr char TYPE = 'D'; static constexpr size_t FIXED = 9; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint32_t userRefNum = 0; Alpha<4> firm{};
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.userRefNum); f(5, m.firm); }
+    static void fields(auto& m, auto& f) { f(1, m.userRefNum); f(5, m.firm); }
     bool operator==(const DisableOrderEntryRequest&) const = default;
 };
 struct EnableOrderEntryRequest {
     static constexpr char TYPE = 'E'; static constexpr size_t FIXED = 9; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint32_t userRefNum = 0; Alpha<4> firm{};
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.userRefNum); f(5, m.firm); }
+    static void fields(auto& m, auto& f) { f(1, m.userRefNum); f(5, m.firm); }
     bool operator==(const EnableOrderEntryRequest&) const = default;
 };
 struct AccountQueryRequest {
     static constexpr char TYPE = 'Q'; static constexpr size_t FIXED = 1; static constexpr Appendage APPENDAGE = Appendage::Optional;
     Options opts;
-    void fields(this auto&, auto&) {}
+    static void fields(auto&, auto&) {}
     bool operator==(const AccountQueryRequest&) const = default;
 };
 
@@ -225,7 +226,7 @@ struct SystemEvent {
     static constexpr char TYPE = 'S'; static constexpr size_t FIXED = 10; static constexpr Appendage APPENDAGE = Appendage::None;
     uint64_t timestamp = 0; char eventCode = 0;         // S start of day, E end of day
     Options opts;                                        // always empty: the message has no appendage
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.eventCode); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.eventCode); }
     bool operator==(const SystemEvent&) const = default;
 };
 struct OrderAccepted {
@@ -234,7 +235,7 @@ struct OrderAccepted {
     char timeInForce = 0, display = 0; uint64_t orderReferenceNumber = 0;
     char capacity = 0, interMarketSweep = 0, crossType = 0, orderState = 0; Alpha<14> clOrdId{};
     Options opts;
-    void fields(this auto& m, auto& f) {
+    static void fields(auto& m, auto& f) {
         f(1, m.timestamp); f(9, m.userRefNum); f(13, m.side); f(14, m.quantity); f(18, m.symbol); f(26, m.price);
         f(34, m.timeInForce); f(35, m.display); f(36, m.orderReferenceNumber); f(44, m.capacity);
         f(45, m.interMarketSweep); f(46, m.crossType); f(47, m.orderState); f(48, m.clOrdId);
@@ -247,7 +248,7 @@ struct OrderReplaced {
     uint64_t price = 0; char timeInForce = 0, display = 0; uint64_t orderReferenceNumber = 0;
     char capacity = 0, interMarketSweep = 0, crossType = 0, orderState = 0; Alpha<14> clOrdId{};
     Options opts;
-    void fields(this auto& m, auto& f) {
+    static void fields(auto& m, auto& f) {
         f(1, m.timestamp); f(9, m.origUserRefNum); f(13, m.userRefNum); f(17, m.side); f(18, m.quantity); f(22, m.symbol);
         f(30, m.price); f(38, m.timeInForce); f(39, m.display); f(40, m.orderReferenceNumber); f(48, m.capacity);
         f(49, m.interMarketSweep); f(50, m.crossType); f(51, m.orderState); f(52, m.clOrdId);
@@ -258,7 +259,7 @@ struct OrderCanceled {
     static constexpr char TYPE = 'C'; static constexpr size_t FIXED = 18; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t userRefNum = 0, quantity = 0; char reason = 0;   // quantity: decremented, not remaining
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.quantity); f(17, m.reason); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.quantity); f(17, m.reason); }
     bool operator==(const OrderCanceled&) const = default;
 };
 struct AiqCanceled {
@@ -266,7 +267,7 @@ struct AiqCanceled {
     uint64_t timestamp = 0; uint32_t userRefNum = 0, decrementShares = 0; char reason = 0; uint32_t quantityPrevented = 0;
     uint64_t executionPrice = 0; char liquidityFlag = 0, aiqStrategy = 0;
     Options opts;
-    void fields(this auto& m, auto& f) {
+    static void fields(auto& m, auto& f) {
         f(1, m.timestamp); f(9, m.userRefNum); f(13, m.decrementShares); f(17, m.reason); f(18, m.quantityPrevented);
         f(22, m.executionPrice); f(30, m.liquidityFlag); f(31, m.aiqStrategy);
     }
@@ -276,7 +277,7 @@ struct OrderExecuted {
     static constexpr char TYPE = 'E'; static constexpr size_t FIXED = 34; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint64_t timestamp = 0; uint32_t userRefNum = 0, quantity = 0; uint64_t price = 0; char liquidityFlag = 0; uint64_t matchNumber = 0;
     Options opts;
-    void fields(this auto& m, auto& f) {
+    static void fields(auto& m, auto& f) {
         f(1, m.timestamp); f(9, m.userRefNum); f(13, m.quantity); f(17, m.price); f(25, m.liquidityFlag); f(26, m.matchNumber);
     }
     bool operator==(const OrderExecuted&) const = default;
@@ -285,77 +286,77 @@ struct BrokenTrade {
     static constexpr char TYPE = 'B'; static constexpr size_t FIXED = 36; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; uint64_t matchNumber = 0; char reason = 0; Alpha<14> clOrdId{};
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.matchNumber); f(21, m.reason); f(22, m.clOrdId); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.matchNumber); f(21, m.reason); f(22, m.clOrdId); }
     bool operator==(const BrokenTrade&) const = default;
 };
 struct OrderRejected {
     static constexpr char TYPE = 'J'; static constexpr size_t FIXED = 29; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; uint16_t reason = 0; Alpha<14> clOrdId{};
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.reason); f(15, m.clOrdId); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.reason); f(15, m.clOrdId); }
     bool operator==(const OrderRejected&) const = default;
 };
 struct CancelPending {
     static constexpr char TYPE = 'P'; static constexpr size_t FIXED = 13; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t userRefNum = 0;
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); }
     bool operator==(const CancelPending&) const = default;
 };
 struct CancelReject {
     static constexpr char TYPE = 'I'; static constexpr size_t FIXED = 13; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t userRefNum = 0;
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); }
     bool operator==(const CancelReject&) const = default;
 };
 struct PriorityUpdate {
     static constexpr char TYPE = 'T'; static constexpr size_t FIXED = 30; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; uint64_t price = 0; char display = 0; uint64_t orderReferenceNumber = 0;
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.price); f(21, m.display); f(22, m.orderReferenceNumber); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.price); f(21, m.display); f(22, m.orderReferenceNumber); }
     bool operator==(const PriorityUpdate&) const = default;
 };
 struct OrderModified {
     static constexpr char TYPE = 'M'; static constexpr size_t FIXED = 18; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; char side = 0; uint32_t quantity = 0;
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.side); f(14, m.quantity); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.side); f(14, m.quantity); }
     bool operator==(const OrderModified&) const = default;
 };
 struct OrderRestated {
     static constexpr char TYPE = 'R'; static constexpr size_t FIXED = 14; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; char reason = 0;   // R refresh of display, P display price update
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.reason); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.reason); }
     bool operator==(const OrderRestated&) const = default;
 };
 struct MassCancelResponse {
     static constexpr char TYPE = 'X'; static constexpr size_t FIXED = 25; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; Alpha<4> firm{}; Alpha<8> symbol{};
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.firm); f(17, m.symbol); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.firm); f(17, m.symbol); }
     bool operator==(const MassCancelResponse&) const = default;
 };
 struct DisableOrderEntryResponse {
     static constexpr char TYPE = 'G'; static constexpr size_t FIXED = 17; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; Alpha<4> firm{};
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.firm); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.firm); }
     bool operator==(const DisableOrderEntryResponse&) const = default;
 };
 struct EnableOrderEntryResponse {
     static constexpr char TYPE = 'K'; static constexpr size_t FIXED = 17; static constexpr Appendage APPENDAGE = Appendage::Required;
     uint64_t timestamp = 0; uint32_t userRefNum = 0; Alpha<4> firm{};
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.firm); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.userRefNum); f(13, m.firm); }
     bool operator==(const EnableOrderEntryResponse&) const = default;
 };
 struct AccountQueryResponse {
     static constexpr char TYPE = 'Q'; static constexpr size_t FIXED = 13; static constexpr Appendage APPENDAGE = Appendage::Optional;
     uint64_t timestamp = 0; uint32_t nextUserRefNum = 0;
     Options opts;
-    void fields(this auto& m, auto& f) { f(1, m.timestamp); f(9, m.nextUserRefNum); }
+    static void fields(auto& m, auto& f) { f(1, m.timestamp); f(9, m.nextUserRefNum); }
     bool operator==(const AccountQueryResponse&) const = default;
 };
 
@@ -370,7 +371,7 @@ template <class M> size_t encode(const M& m, uint8_t* out, size_t cap) noexcept 
     if (n > cap) return 0;
     out[0] = uint8_t(M::TYPE);
     Writer w{out};
-    m.fields(w);
+    M::fields(m, w);
     if (n > M::FIXED) { putBe16(out + M::FIXED, uint16_t(n - M::FIXED - 2)); m.opts.put(out + M::FIXED + 2); }
     return n;
 }
@@ -379,7 +380,7 @@ template <class M> bool decode(const uint8_t* p, size_t n, M& m) noexcept {
     if (n < M::FIXED || p[0] != uint8_t(M::TYPE)) return false;
     m = M{};
     Reader r{p};
-    m.fields(r);
+    M::fields(m, r);
     if (n == M::FIXED) return M::APPENDAGE != Appendage::Required;
     if (M::APPENDAGE == Appendage::None || n < M::FIXED + 2) return false;
     const size_t len = be16(p + M::FIXED);
